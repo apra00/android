@@ -31,13 +31,17 @@ import com.owncloud.android.operations.common.SyncOperation;
  */
 public class GetCapabilitiesOperation extends SyncOperation {
 
+    public GetCapabilitiesOperation(FileDataStorageManager storageManager) {
+        super(storageManager);
+    }
+
     @Override
     protected RemoteOperationResult run(OwnCloudClient client) {
         final FileDataStorageManager storageManager = getStorageManager();
 
         OCCapability currentCapability = null;
-        if (storageManager.getAccount() != null) {
-            currentCapability = storageManager.getCapability(storageManager.getAccount().name);
+        if (!storageManager.getUser().isAnonymous()) {
+            currentCapability = storageManager.getCapability(storageManager.getUser().getAccountName());
         }
 
         RemoteOperationResult result = new GetCapabilitiesRemoteOperation(currentCapability).execute(client);

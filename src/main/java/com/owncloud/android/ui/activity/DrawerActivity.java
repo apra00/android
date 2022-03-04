@@ -4,12 +4,14 @@
  * @author Andy Scherzinger
  * @author Tobias Kaminsky
  * @author Chris Narkiewicz  <hello@ezaquarii.com>
+ * @author TSI-mc
  * Copyright (C) 2016 Andy Scherzinger
  * Copyright (C) 2017 Tobias Kaminsky
  * Copyright (C) 2016 Nextcloud
  * Copyright (C) 2016 ownCloud Inc.
  * Copyright (C) 2020 Chris Narkiewicz <hello@ezaquarii.com>
  * Copyright (C) 2020 Infomaniak Network SA
+ * Copyright (C) 2021 TSI-mc
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU AFFERO GENERAL PUBLIC LICENSE
@@ -39,7 +41,6 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.SystemClock;
@@ -98,10 +99,12 @@ import com.owncloud.android.ui.events.AccountRemovedEvent;
 import com.owncloud.android.ui.events.ChangeMenuEvent;
 import com.owncloud.android.ui.events.DummyDrawerEvent;
 import com.owncloud.android.ui.events.SearchEvent;
+import com.owncloud.android.ui.fragment.FileDetailsSharingProcessFragment;
 import com.owncloud.android.ui.fragment.GalleryFragment;
 import com.owncloud.android.ui.fragment.OCFileListFragment;
 import com.owncloud.android.ui.preview.PreviewTextStringFragment;
 import com.owncloud.android.ui.trashbin.TrashbinActivity;
+import com.owncloud.android.utils.BitmapUtils;
 import com.owncloud.android.utils.DisplayUtils;
 import com.owncloud.android.utils.DrawerMenuUtil;
 import com.owncloud.android.utils.FilesSyncHelper;
@@ -117,7 +120,6 @@ import com.owncloud.android.utils.theme.ThemeMenuUtils;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
-import org.parceler.Parcels;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -132,6 +134,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.content.res.ResourcesCompat;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
+import androidx.fragment.app.Fragment;
 
 /**
  * Base class to handle setup of the drawer implementation including user switching and avatar fetching and fallback
@@ -146,6 +149,7 @@ public abstract class DrawerActivity extends ToolbarActivity
     private static final int ACTION_MANAGE_ACCOUNTS = 101;
     private static final int MENU_ORDER_EXTERNAL_LINKS = 3;
     private static final int MENU_ITEM_EXTERNAL_LINK = 111;
+    private static final int MAX_LOGO_SIZE_PX = 1000;
 
     /**
      * Reference to the drawer layout.
@@ -321,7 +325,16 @@ public abstract class DrawerActivity extends ToolbarActivity
                 SimpleTarget target = new SimpleTarget<Bitmap>() {
                     @Override
                     public void onResourceReady(Bitmap resource, GlideAnimation glideAnimation) {
-                        Drawable[] drawables = {new ColorDrawable(primaryColor), new BitmapDrawable(resource)};
+
+                        Bitmap logo = resource;
+                        int width = resource.getWidth();
+                        int height = resource.getHeight();
+                        int max = Math.max(width, height);
+                        if (max > MAX_LOGO_SIZE_PX) {
+                            logo = BitmapUtils.scaleBitmap(resource, MAX_LOGO_SIZE_PX, width, height, max);
+                        }
+
+                        Drawable[] drawables = {new ColorDrawable(primaryColor), new BitmapDrawable(logo)};
                         LayerDrawable layerDrawable = new LayerDrawable(drawables);
 
                         String name = capability.getServerName();
@@ -360,7 +373,7 @@ public abstract class DrawerActivity extends ToolbarActivity
         }
 
     }
-    
+
     /**
      * setup drawer header, basically the logo color
      */
@@ -390,7 +403,7 @@ public abstract class DrawerActivity extends ToolbarActivity
     }
 
     private void filterDrawerMenu(final Menu menu, @NonNull final User user) {
-        FileDataStorageManager storageManager = new FileDataStorageManager(user.toPlatformAccount(),
+        FileDataStorageManager storageManager = new FileDataStorageManager(user,
                                                                            getContentResolver());
         OCCapability capability = storageManager.getCapability(user.getAccountName());
 
@@ -403,9 +416,6 @@ public abstract class DrawerActivity extends ToolbarActivity
         DrawerMenuUtil.removeMenuItem(menu, R.id.nav_community,
                                       !getResources().getBoolean(R.bool.participate_enabled));
         DrawerMenuUtil.removeMenuItem(menu, R.id.nav_shared, !getResources().getBoolean(R.bool.shared_enabled));
-        DrawerMenuUtil.removeMenuItem(menu, R.id.nav_contacts, !getResources().getBoolean(R.bool.contacts_backup)
-            || !getResources().getBoolean(R.bool.show_drawer_contacts_backup));
-
         DrawerMenuUtil.removeMenuItem(menu, R.id.nav_logout, !getResources().getBoolean(R.bool.show_drawer_logout));
     }
 
@@ -418,79 +428,63 @@ public abstract class DrawerActivity extends ToolbarActivity
     private void onNavigationItemClicked(final MenuItem menuItem) {
         setDrawerMenuItemChecked(menuItem.getItemId());
 
-        switch (menuItem.getItemId()) {
-            case R.id.nav_all_files:
-                if (this instanceof FileDisplayActivity &&
-                    !(((FileDisplayActivity) this).getLeftFragment() instanceof GalleryFragment) &&
-                    !(((FileDisplayActivity) this).getLeftFragment() instanceof PreviewTextStringFragment)) {
-                    showFiles(false);
-                    ((FileDisplayActivity) this).browseToRoot();
-                    EventBus.getDefault().post(new ChangeMenuEvent());
-                } else {
-                    Intent intent = new Intent(getApplicationContext(), FileDisplayActivity.class);
-                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                    intent.setAction(FileDisplayActivity.ALL_FILES);
-                    intent.putExtra(FileDisplayActivity.DRAWER_MENU_ID, menuItem.getItemId());
-                    startActivity(intent);
-                }
-                break;
-            case R.id.nav_favorites:
-                handleSearchEvents(new SearchEvent("", SearchRemoteOperation.SearchType.FAVORITE_SEARCH),
-                                   menuItem.getItemId());
-                break;
-            case R.id.nav_gallery:
-                startPhotoSearch(menuItem);
-                break;
-            case R.id.nav_on_device:
+        int itemId = menuItem.getItemId();
+
+        if (itemId == R.id.nav_all_files) {
+            if (this instanceof FileDisplayActivity &&
+                !(((FileDisplayActivity) this).getLeftFragment() instanceof GalleryFragment) &&
+                !(((FileDisplayActivity) this).getLeftFragment() instanceof PreviewTextStringFragment)) {
+                showFiles(false);
+                ((FileDisplayActivity) this).browseToRoot();
                 EventBus.getDefault().post(new ChangeMenuEvent());
-                showFiles(true);
-                break;
-            case R.id.nav_uploads:
-                startActivity(UploadListActivity.class, Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                break;
-            case R.id.nav_trashbin:
-                startActivity(TrashbinActivity.class, Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                break;
-            case R.id.nav_activity:
-                startActivity(ActivitiesActivity.class, Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                break;
-            case R.id.nav_notifications:
-                startActivity(NotificationsActivity.class);
-                break;
-            case R.id.nav_contacts:
-                ContactsPreferenceActivity.startActivity(this);
-                break;
-            case R.id.nav_settings:
-                startActivity(SettingsActivity.class);
-                break;
-            case R.id.nav_community:
-                startActivity(CommunityActivity.class);
-                break;
-            case R.id.nav_logout:
-                mCheckedMenuItem = -1;
-                menuItem.setChecked(false);
-                final Optional<User> optionalUser = getUser();
-                if (optionalUser.isPresent()) {
-                    UserInfoActivity.openAccountRemovalConfirmationDialog(optionalUser.get(), getSupportFragmentManager());
-                }
-                break;
-            case R.id.nav_shared:
-                handleSearchEvents(new SearchEvent("", SearchRemoteOperation.SearchType.SHARED_FILTER),
-                                   menuItem.getItemId());
-                break;
-            case R.id.nav_recently_modified:
-                handleSearchEvents(new SearchEvent("", SearchRemoteOperation.SearchType.RECENTLY_MODIFIED_SEARCH),
-                                   menuItem.getItemId());
-                break;
-            default:
-                if (menuItem.getItemId() >= MENU_ITEM_EXTERNAL_LINK &&
-                    menuItem.getItemId() <= MENU_ITEM_EXTERNAL_LINK + 100) {
-                    // external link clicked
-                    externalLinkClicked(menuItem);
-                } else {
-                    Log_OC.i(TAG, "Unknown drawer menu item clicked: " + menuItem.getTitle());
-                }
-                break;
+            } else {
+                Intent intent = new Intent(getApplicationContext(), FileDisplayActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                intent.setAction(FileDisplayActivity.ALL_FILES);
+                intent.putExtra(FileDisplayActivity.DRAWER_MENU_ID, menuItem.getItemId());
+                startActivity(intent);
+            }
+        } else if (itemId == R.id.nav_favorites) {
+            handleSearchEvents(new SearchEvent("", SearchRemoteOperation.SearchType.FAVORITE_SEARCH),
+                               menuItem.getItemId());
+        } else if (itemId == R.id.nav_gallery) {
+            startPhotoSearch(menuItem);
+        } else if (itemId == R.id.nav_on_device) {
+            EventBus.getDefault().post(new ChangeMenuEvent());
+            showFiles(true);
+        } else if (itemId == R.id.nav_uploads) {
+            startActivity(UploadListActivity.class, Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        } else if (itemId == R.id.nav_trashbin) {
+            startActivity(TrashbinActivity.class, Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        } else if (itemId == R.id.nav_activity) {
+            startActivity(ActivitiesActivity.class, Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        } else if (itemId == R.id.nav_notifications) {
+            startActivity(NotificationsActivity.class);
+        } else if (itemId == R.id.nav_settings) {
+            startActivity(SettingsActivity.class);
+        } else if (itemId == R.id.nav_community) {
+            startActivity(CommunityActivity.class);
+        } else if (itemId == R.id.nav_logout) {
+            mCheckedMenuItem = -1;
+            menuItem.setChecked(false);
+            final Optional<User> optionalUser = getUser();
+            if (optionalUser.isPresent()) {
+                UserInfoActivity.openAccountRemovalConfirmationDialog(optionalUser.get(), getSupportFragmentManager());
+            }
+        } else if (itemId == R.id.nav_shared) {
+            handleSearchEvents(new SearchEvent("", SearchRemoteOperation.SearchType.SHARED_FILTER),
+                               menuItem.getItemId());
+        } else if (itemId == R.id.nav_recently_modified) {
+            handleSearchEvents(new SearchEvent("", SearchRemoteOperation.SearchType.RECENTLY_MODIFIED_SEARCH),
+                               menuItem.getItemId());
+        } else {
+            if (menuItem.getItemId() >= MENU_ITEM_EXTERNAL_LINK &&
+                menuItem.getItemId() <= MENU_ITEM_EXTERNAL_LINK + 100) {
+                // external link clicked
+                externalLinkClicked(menuItem);
+            } else {
+                Log_OC.w(TAG, "Unknown drawer menu item clicked: " + menuItem.getTitle());
+            }
         }
     }
 
@@ -531,34 +525,28 @@ public abstract class DrawerActivity extends ToolbarActivity
         SearchEvent searchEvent = new SearchEvent("image/%", SearchRemoteOperation.SearchType.PHOTO_SEARCH);
         MainApp.showOnlyFilesOnDevice(false);
 
-        Intent intent = new Intent(getApplicationContext(), FileDisplayActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        intent.setAction(Intent.ACTION_SEARCH);
-        intent.putExtra(OCFileListFragment.SEARCH_EVENT, Parcels.wrap(searchEvent));
-        intent.putExtra(FileDisplayActivity.DRAWER_MENU_ID, menuItem.getItemId());
-        startActivity(intent);
+        launchActivityForSearch(searchEvent, menuItem.getItemId());
     }
 
     private void handleSearchEvents(SearchEvent searchEvent, int menuItemId) {
         if (this instanceof FileDisplayActivity) {
-            if (((FileDisplayActivity) this).getListOfFilesFragment() instanceof GalleryFragment) {
-                Intent intent = new Intent(getApplicationContext(), FileDisplayActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                intent.setAction(Intent.ACTION_SEARCH);
-                intent.putExtra(OCFileListFragment.SEARCH_EVENT, Parcels.wrap(searchEvent));
-                intent.putExtra(FileDisplayActivity.DRAWER_MENU_ID, menuItemId);
-                startActivity(intent);
+            if (((FileDisplayActivity) this).getLeftFragment() instanceof GalleryFragment) {
+                launchActivityForSearch(searchEvent, menuItemId);
             } else {
                 EventBus.getDefault().post(searchEvent);
             }
         } else {
-            Intent intent = new Intent(getApplicationContext(), FileDisplayActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            intent.setAction(Intent.ACTION_SEARCH);
-            intent.putExtra(OCFileListFragment.SEARCH_EVENT, Parcels.wrap(searchEvent));
-            intent.putExtra(FileDisplayActivity.DRAWER_MENU_ID, menuItemId);
-            startActivity(intent);
+            launchActivityForSearch(searchEvent, menuItemId);
         }
+    }
+
+    private void launchActivityForSearch(SearchEvent searchEvent, int menuItemId) {
+        Intent intent = new Intent(getApplicationContext(), FileDisplayActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        intent.setAction(Intent.ACTION_SEARCH);
+        intent.putExtra(OCFileListFragment.SEARCH_EVENT, searchEvent);
+        intent.putExtra(FileDisplayActivity.DRAWER_MENU_ID, menuItemId);
+        startActivity(intent);
     }
 
     /**
@@ -577,14 +565,14 @@ public abstract class DrawerActivity extends ToolbarActivity
 
     private void externalLinkClicked(MenuItem menuItem) {
         for (ExternalLink link : externalLinksProvider.getExternalLink(ExternalLinkType.LINK)) {
-            if (menuItem.getTitle().toString().equalsIgnoreCase(link.name)) {
-                if (link.redirect) {
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(link.url));
+            if (menuItem.getTitle().toString().equalsIgnoreCase(link.getName())) {
+                if (link.getRedirect()) {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(link.getUrl()));
                     DisplayUtils.startIntentIfAppAvailable(intent, this, R.string.no_browser_available);
                 } else {
                     Intent externalWebViewIntent = new Intent(getApplicationContext(), ExternalSiteWebView.class);
-                    externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_TITLE, link.name);
-                    externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_URL, link.url);
+                    externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_TITLE, link.getName());
+                    externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_URL, link.getUrl());
                     externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_SHOW_SIDEBAR, true);
                     externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_MENU_ITEM_ID, menuItem.getItemId());
                     startActivity(externalWebViewIntent);
@@ -724,13 +712,13 @@ public abstract class DrawerActivity extends ToolbarActivity
 
                 if (quotas.size() > 0) {
                     final ExternalLink firstQuota = quotas.get(0);
-                    mQuotaTextLink.setText(firstQuota.name);
+                    mQuotaTextLink.setText(firstQuota.getName());
                     mQuotaTextLink.setClickable(true);
                     mQuotaTextLink.setVisibility(View.VISIBLE);
                     mQuotaTextLink.setOnClickListener(v -> {
                         Intent externalWebViewIntent = new Intent(getApplicationContext(), ExternalSiteWebView.class);
-                        externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_TITLE, firstQuota.name);
-                        externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_URL, firstQuota.url);
+                        externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_TITLE, firstQuota.getName());
+                        externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_URL, firstQuota.getUrl());
                         externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_SHOW_SIDEBAR, true);
                         externalWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_MENU_ITEM_ID, -1);
                         startActivity(externalWebViewIntent);
@@ -759,7 +747,7 @@ public abstract class DrawerActivity extends ToolbarActivity
                     DisplayUtils.downloadIcon(getUserAccountManager(),
                                               clientFactory,
                                               this,
-                                              firstQuota.iconUrl,
+                                              firstQuota.getIconUrl(),
                                               target,
                                               R.drawable.ic_link,
                                               size,
@@ -882,7 +870,7 @@ public abstract class DrawerActivity extends ToolbarActivity
 
             for (final ExternalLink link : externalLinksProvider.getExternalLink(ExternalLinkType.LINK)) {
                 int id = mNavigationView.getMenu().add(R.id.drawer_menu_external_links,
-                                                       MENU_ITEM_EXTERNAL_LINK + link.id, MENU_ORDER_EXTERNAL_LINKS, link.name)
+                                                       MENU_ITEM_EXTERNAL_LINK + link.getId(), MENU_ORDER_EXTERNAL_LINKS, link.getName())
                     .setCheckable(true).getItemId();
 
                 MenuSimpleTarget target = new MenuSimpleTarget<Drawable>(id) {
@@ -901,7 +889,7 @@ public abstract class DrawerActivity extends ToolbarActivity
                 DisplayUtils.downloadIcon(getUserAccountManager(),
                                           clientFactory,
                                           this,
-                                          link.iconUrl,
+                                          link.getIconUrl(),
                                           target,
                                           R.drawable.ic_link,
                                           size,
@@ -986,7 +974,13 @@ public abstract class DrawerActivity extends ToolbarActivity
             closeDrawer();
             return;
         }
-        super.onBackPressed();
+        Fragment fileDetailsSharingProcessFragment =
+            getSupportFragmentManager().findFragmentByTag(FileDetailsSharingProcessFragment.TAG);
+        if (fileDetailsSharingProcessFragment != null) {
+            ((FileDetailsSharingProcessFragment) fileDetailsSharingProcessFragment).onBackPressed();
+        } else {
+            super.onBackPressed();
+        }
     }
 
     @Override
@@ -1010,8 +1004,7 @@ public abstract class DrawerActivity extends ToolbarActivity
                 setAccount(accountManager.getCurrentAccount(), false);
                 restart();
             }
-        } else if (requestCode == PassCodeManager.PASSCODE_ACTIVITY &&
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && data != null) {
+        } else if (requestCode == PassCodeManager.PASSCODE_ACTIVITY && data != null) {
             int result = data.getIntExtra(RequestCredentialsActivity.KEY_CHECK_RESULT,
                                           RequestCredentialsActivity.KEY_CHECK_RESULT_FALSE);
 
@@ -1138,8 +1131,8 @@ public abstract class DrawerActivity extends ToolbarActivity
                 // fetch capabilities as early as possible
                 if ((getCapabilities() == null || getCapabilities().getAccountName().isEmpty())
                     && getStorageManager() != null) {
-                    GetCapabilitiesOperation getCapabilities = new GetCapabilitiesOperation();
-                    getCapabilities.execute(getStorageManager(), getBaseContext());
+                    GetCapabilitiesOperation getCapabilities = new GetCapabilitiesOperation(getStorageManager());
+                    getCapabilities.execute(getBaseContext());
                 }
 
                 User user = accountManager.getUser();

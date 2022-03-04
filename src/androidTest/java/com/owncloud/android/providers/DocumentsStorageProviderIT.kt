@@ -6,7 +6,6 @@ import androidx.documentfile.provider.DocumentFile
 import com.owncloud.android.AbstractOnServerIT
 import com.owncloud.android.R
 import com.owncloud.android.datamodel.OCFile.ROOT_PATH
-import com.owncloud.android.lib.common.network.WebdavUtils
 import com.owncloud.android.providers.DocumentsProviderUtils.assertExistsOnServer
 import com.owncloud.android.providers.DocumentsProviderUtils.assertListFilesEquals
 import com.owncloud.android.providers.DocumentsProviderUtils.assertReadEquals
@@ -39,7 +38,7 @@ class DocumentsStorageProviderIT : AbstractOnServerIT() {
     private val authority = context.getString(R.string.document_provider_authority)
 
     private val rootFileId = storageManager.getFileByEncryptedRemotePath(ROOT_PATH).fileId
-    private val documentId = "${account.hashCode()}${DOCUMENTID_SEPARATOR}$rootFileId"
+    private val documentId = "${user.hashCode()}${DOCUMENTID_SEPARATOR}$rootFileId"
     private val uri = DocumentsContract.buildTreeDocumentUri(authority, documentId)
     private val rootDir get() = DocumentFile.fromTreeUri(context, uri)!!
 
@@ -177,13 +176,16 @@ class DocumentsStorageProviderIT : AbstractOnServerIT() {
         assertExistsOnServer(client, ocFile1.remotePath, false)
     }
 
-    @Test
+    @Suppress("MagicNumber")
+    @Test(timeout = 5 * 60 * 1000)
     fun testServerChangedFileContent() {
         // create random file
         val file1 = rootDir.createFile("text/plain", RandomString.make())!!
         file1.assertRegularFile(size = 0L)
 
-        val createdETag = file1.getOCFile(storageManager)!!.etag
+        val createdETag = file1.getOCFile(storageManager)!!.etagOnServer
+
+        assertTrue(createdETag.isNotEmpty())
 
         val content1 = "initial content".toByteArray()
 
@@ -192,8 +194,10 @@ class DocumentsStorageProviderIT : AbstractOnServerIT() {
             it!!.write(content1)
         }
 
-        while (file1.getOCFile(storageManager)!!.etag == createdETag) {
+        // refresh
+        while (file1.getOCFile(storageManager)!!.etagOnServer == createdETag) {
             shortSleep()
+            rootDir.listFiles()
         }
 
         val remotePath = file1.getOCFile(storageManager)!!.remotePath
@@ -201,7 +205,7 @@ class DocumentsStorageProviderIT : AbstractOnServerIT() {
         val content2 = "new content".toByteArray()
 
         // modify content on server side
-        val putMethod = PutMethod(client.webdavUri.toString() + WebdavUtils.encodePath(remotePath))
+        val putMethod = PutMethod(client.getFilesDavUri(remotePath))
         putMethod.requestEntity = ByteArrayRequestEntity(content2)
         assertEquals(HttpStatus.SC_NO_CONTENT, client.executeMethod(putMethod))
         client.exhaustResponse(putMethod.responseBodyAsStream)

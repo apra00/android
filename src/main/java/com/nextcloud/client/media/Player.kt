@@ -61,7 +61,7 @@ internal class Player(
     private var enqueuedFile: PlaylistItem? = null
 
     private var playedFile: OCFile? = null
-    private var startPositionMs: Int = 0
+    private var startPositionMs: Long = 0
     private var autoPlay = true
     private var user: User? = null
     private var dataSource: String? = null
@@ -152,8 +152,10 @@ internal class Player(
 
         override fun onPausePlayback() {
             trace("onPausePlayback()")
-            mediaPlayer?.pause()
-            listener?.onPause()
+            if (mediaPlayer?.isPlaying == true) {
+                mediaPlayer?.pause()
+                listener?.onPause()
+            }
         }
 
         override fun onRequestFocus() {

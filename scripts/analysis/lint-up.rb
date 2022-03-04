@@ -39,7 +39,7 @@ require 'open3'
 begin
     gem "xml-simple"
     rescue LoadError
-    system("gem install xml-simple")
+    system("gem install --user-install xml-simple")
     Gem.clear_paths
 end
 
@@ -56,12 +56,12 @@ end
 
 # run Lint
 puts "running Lint..."
-system './gradlew clean lint 1>/dev/null'
+system './gradlew clean lintGplayDebug 1>/dev/null'
 
 # confirm that Lint ran w/out error
 result = $?.to_i
 if result != 0
-    puts "FAIL: failed to run ./gradlew clean lint"
+    puts "FAIL: failed to run ./gradlew clean lintGplayDebug"
     exit 1
 end
 
@@ -179,21 +179,15 @@ previous_git_email = previous_git_email.strip
 # update git user name and email for this script
 system ("git config --local user.name '"  + git_user + "'")
 system ("git config --local user.email 'android@nextcloud.com'")
-system ("git remote rm origin")
-system ("git remote add origin https://" + git_user + ":" + git_token + "@github.com/nextcloud/android")
 
 # add previous Lint result file to git
 system ('git add ' + PREVIOUS_LINT_RESULTS_FILE)
 
 # commit changes; Add "skip ci" so that we don't accidentally trigger another Drone build
-system ('git commit -sm "Drone: update Lint results to reflect reduced error/warning count [skip ci]" ')
+system({"GIT_COMMITTER_EMAIL" => "drone@nextcloud.com", "GIT_AUTHOR_EMAIL" => "drone@nextcloud.com"}, 'git commit -sm "Drone: update Lint results to reflect reduced error/warning count [skip ci]"')
 
 # push to origin
-system ('git push origin HEAD:' + git_branch)
-
-# restore previous git user name and email
-system("git config --local user.name '#{previous_git_username}'")
-system("git config --local user.email '#{previous_git_email}'")
+system ('git push')
 
 puts "SUCCESS: count was reduced"
 exit 0 # success

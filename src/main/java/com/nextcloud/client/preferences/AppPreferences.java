@@ -361,4 +361,16 @@ public interface AppPreferences {
     void resetPinWrongAttempts();
 
     int pinBruteForceDelay();
+
+    String getUidPid();
+
+    void setUidPid(String uidPid);
+
+    long getCalendarLastBackup();
+
+    void setCalendarLastBackup(long timestamp);
+
+    void setPdfZoomTipShownCount(int count);
+
+    int getPdfZoomTipShownCount();
 }

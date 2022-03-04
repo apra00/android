@@ -31,8 +31,12 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 
 import com.google.gson.Gson;
+import com.nextcloud.android.lib.resources.profile.Action;
+import com.nextcloud.android.lib.resources.profile.HoverCard;
 import com.nextcloud.client.account.RegisteredUser;
 import com.nextcloud.client.account.Server;
+import com.nextcloud.client.account.User;
+import com.nextcloud.client.account.UserAccountManager;
 import com.nextcloud.client.device.DeviceInfo;
 import com.nextcloud.ui.ChooseAccountDialogFragment;
 import com.owncloud.android.AbstractIT;
@@ -44,6 +48,7 @@ import com.owncloud.android.lib.common.Creator;
 import com.owncloud.android.lib.common.DirectEditing;
 import com.owncloud.android.lib.common.Editor;
 import com.owncloud.android.lib.common.OwnCloudAccount;
+import com.owncloud.android.lib.common.accounts.AccountTypeUtils;
 import com.owncloud.android.lib.common.accounts.AccountUtils;
 import com.owncloud.android.lib.resources.status.CapabilityBooleanType;
 import com.owncloud.android.lib.resources.status.OCCapability;
@@ -53,15 +58,18 @@ import com.owncloud.android.lib.resources.users.StatusType;
 import com.owncloud.android.ui.activity.FileDisplayActivity;
 import com.owncloud.android.ui.fragment.OCFileListBottomSheetActions;
 import com.owncloud.android.ui.fragment.OCFileListBottomSheetDialog;
+import com.owncloud.android.ui.fragment.ProfileBottomSheetDialog;
 import com.owncloud.android.utils.MimeTypeUtil;
 import com.owncloud.android.utils.ScreenshotTest;
 
+import org.junit.After;
 import org.junit.Rule;
 import org.junit.Test;
 
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 
 import androidx.fragment.app.DialogFragment;
@@ -70,8 +78,24 @@ import androidx.test.espresso.intent.rule.IntentsTestRule;
 import static androidx.test.platform.app.InstrumentationRegistry.getInstrumentation;
 
 public class DialogFragmentIT extends AbstractIT {
+
+    private final String SERVER_URL = "https://nextcloud.localhost";
+
     @Rule public IntentsTestRule<FileDisplayActivity> activityRule =
         new IntentsTestRule<>(FileDisplayActivity.class, true, false);
+
+    private FileDisplayActivity getFileDisplayActivity() {
+        Intent intent = new Intent(targetContext, FileDisplayActivity.class);
+        return activityRule.launchActivity(intent);
+    }
+
+
+    @After
+    public void quitLooperIfNeeded() {
+        if (Looper.myLooper() != null) {
+            Looper.myLooper().quitSafely();
+        }
+    }
 
     @Test
     @ScreenshotTest
@@ -159,24 +183,28 @@ public class DialogFragmentIT extends AbstractIT {
     @Test
     @ScreenshotTest
     public void testAccountChooserDialog() throws AccountUtils.AccountNotFoundException {
+        FileDisplayActivity activity = getFileDisplayActivity();
+        UserAccountManager userAccountManager = activity.getUserAccountManager();
         AccountManager accountManager = AccountManager.get(targetContext);
         for (Account account : accountManager.getAccountsByType(MainApp.getAccountType(targetContext))) {
             accountManager.removeAccountExplicitly(account);
         }
 
-        Account newAccount = new Account("test@https://server.com", MainApp.getAccountType(targetContext));
+        Account newAccount = new Account("test@https://nextcloud.localhost", MainApp.getAccountType(targetContext));
         accountManager.addAccountExplicitly(newAccount, "password", null);
-        accountManager.setUserData(newAccount, AccountUtils.Constants.KEY_OC_BASE_URL, "https://server.com");
+        accountManager.setUserData(newAccount, AccountUtils.Constants.KEY_OC_BASE_URL, SERVER_URL);
         accountManager.setUserData(newAccount, AccountUtils.Constants.KEY_USER_ID, "test");
+        accountManager.setAuthToken(newAccount, AccountTypeUtils.getAuthTokenTypePass(newAccount.type), "password");
+        User newUser = userAccountManager.getUser(newAccount.name).orElseThrow(RuntimeException::new);
 
-
-        Account newAccount2 = new Account("user1@server.com", MainApp.getAccountType(targetContext));
+        Account newAccount2 = new Account("user1@nextcloud.localhost", MainApp.getAccountType(targetContext));
         accountManager.addAccountExplicitly(newAccount2, "password", null);
-        accountManager.setUserData(newAccount2, AccountUtils.Constants.KEY_OC_BASE_URL, "https://server.com");
+        accountManager.setUserData(newAccount2, AccountUtils.Constants.KEY_OC_BASE_URL, SERVER_URL);
         accountManager.setUserData(newAccount2, AccountUtils.Constants.KEY_USER_ID, "user1");
         accountManager.setUserData(newAccount2, AccountUtils.Constants.KEY_OC_VERSION, "20.0.0");
+        accountManager.setAuthToken(newAccount2, AccountTypeUtils.getAuthTokenTypePass(newAccount.type), "password");
 
-        FileDataStorageManager fileDataStorageManager = new FileDataStorageManager(newAccount,
+        FileDataStorageManager fileDataStorageManager = new FileDataStorageManager(newUser,
                                                                                    targetContext.getContentResolver());
 
         OCCapability capability = new OCCapability();
@@ -187,15 +215,16 @@ public class DialogFragmentIT extends AbstractIT {
         ChooseAccountDialogFragment sut =
             ChooseAccountDialogFragment.newInstance(new RegisteredUser(newAccount,
                                                                        new OwnCloudAccount(newAccount, targetContext),
-                                                                       new Server(URI.create("https://server.com"),
+                                                                       new Server(URI.create(SERVER_URL),
                                                                                   OwnCloudVersion.nextcloud_20)));
-        FileDisplayActivity activity = showDialog(sut);
+        showDialog(activity, sut);
 
         activity.runOnUiThread(() -> sut.setStatus(new Status(StatusType.DND,
                                                               "Busy fixing 🐛…",
                                                               "",
                                                               -1),
                                                    targetContext));
+        waitForIdleSync();
         shortSleep();
         screenshot(sut, "dnd");
 
@@ -204,6 +233,7 @@ public class DialogFragmentIT extends AbstractIT {
                                                               "",
                                                               -1),
                                                    targetContext));
+        waitForIdleSync();
         shortSleep();
         screenshot(sut, "online");
 
@@ -212,14 +242,17 @@ public class DialogFragmentIT extends AbstractIT {
                                                               "🎉",
                                                               -1),
                                                    targetContext));
+        waitForIdleSync();
         shortSleep();
         screenshot(sut, "fun");
 
         activity.runOnUiThread(() -> sut.setStatus(new Status(StatusType.OFFLINE, "", "", -1), targetContext));
+        waitForIdleSync();
         shortSleep();
         screenshot(sut, "offline");
 
         activity.runOnUiThread(() -> sut.setStatus(new Status(StatusType.AWAY, "Vacation", "🌴", -1), targetContext));
+        waitForIdleSync();
         shortSleep();
         screenshot(sut, "away");
     }
@@ -232,12 +265,16 @@ public class DialogFragmentIT extends AbstractIT {
             accountManager.removeAccountExplicitly(account);
         }
 
-        Account newAccount = new Account("test@https://server.com", MainApp.getAccountType(targetContext));
+        Account newAccount = new Account("test@https://nextcloud.localhost", MainApp.getAccountType(targetContext));
         accountManager.addAccountExplicitly(newAccount, "password", null);
-        accountManager.setUserData(newAccount, AccountUtils.Constants.KEY_OC_BASE_URL, "https://server.com");
+        accountManager.setUserData(newAccount, AccountUtils.Constants.KEY_OC_BASE_URL, SERVER_URL);
         accountManager.setUserData(newAccount, AccountUtils.Constants.KEY_USER_ID, "test");
+        accountManager.setAuthToken(newAccount, AccountTypeUtils.getAuthTokenTypePass(newAccount.type), "password");
 
-        FileDataStorageManager fileDataStorageManager = new FileDataStorageManager(newAccount,
+        FileDisplayActivity fda = getFileDisplayActivity();
+        UserAccountManager userAccountManager = fda.getUserAccountManager();
+        User newUser = userAccountManager.getUser(newAccount.name).get();
+        FileDataStorageManager fileDataStorageManager = new FileDataStorageManager(newUser,
                                                                                    targetContext.getContentResolver());
 
         OCCapability capability = new OCCapability();
@@ -248,9 +285,9 @@ public class DialogFragmentIT extends AbstractIT {
         ChooseAccountDialogFragment sut =
             ChooseAccountDialogFragment.newInstance(new RegisteredUser(newAccount,
                                                                        new OwnCloudAccount(newAccount, targetContext),
-                                                                       new Server(URI.create("https://server.com"),
+                                                                       new Server(URI.create(SERVER_URL),
                                                                                   OwnCloudVersion.nextcloud_20)));
-        showDialog(sut);
+        showDialog(fda, sut);
     }
 
     @Test
@@ -298,6 +335,11 @@ public class DialogFragmentIT extends AbstractIT {
             }
 
             @Override
+            public void scanDocUpload() {
+                
+            }
+
+            @Override
             public void showTemplate(Creator creator, String headline) {
 
             }
@@ -316,21 +358,21 @@ public class DialogFragmentIT extends AbstractIT {
 
         // add direct editing info
         DirectEditing directEditing = new DirectEditing();
-        directEditing.creators.put("1", new Creator("1",
+        directEditing.getCreators().put("1", new Creator("1",
                                                     "text",
                                                     "text file",
                                                     ".md",
                                                     "application/octet-stream",
                                                     false));
 
-        directEditing.creators.put("2", new Creator("2",
+        directEditing.getCreators().put("2", new Creator("2",
                                                     "md",
                                                     "markdown file",
                                                     ".md",
                                                     "application/octet-stream",
                                                     false));
 
-        directEditing.editors.put("text",
+        directEditing.getEditors().put("text",
                                   new Editor("1",
                                              "Text",
                                              new ArrayList<>(Collections.singletonList(MimeTypeUtil.MIMETYPE_TEXT_MARKDOWN)),
@@ -362,10 +404,60 @@ public class DialogFragmentIT extends AbstractIT {
         screenshot(sut.getWindow().getDecorView());
     }
 
+    @Test
+    @ScreenshotTest
+    public void testProfileBottomSheet() {
+        if (Looper.myLooper() == null) {
+            Looper.prepare();
+        }
+
+        // Fixed values for HoverCard
+        List<Action> actions = new ArrayList<>();
+        actions.add(new Action("profile",
+                               "View profile",
+                               "https://dev.nextcloud.com/core/img/actions/profile.svg",
+                               "https://dev.nextcloud.com/index.php/u/christine"));
+        actions.add(new Action("core",
+                               "christine.scott@nextcloud.com",
+                               "https://dev.nextcloud.com/core/img/actions/mail.svg",
+                               "mailto:christine.scott@nextcloud.com"));
+
+        actions.add(new Action("spreed",
+                               "Talk to Christine",
+                               "https://dev.nextcloud.com/apps/spreed/img/app-dark.svg",
+                               "https://dev.nextcloud.com/apps/spreed/?callUser=christine"
+        ));
+
+        HoverCard hoverCard = new HoverCard("christine", "Christine Scott", actions);
+
+        // show dialog
+        Intent intent = new Intent(targetContext, FileDisplayActivity.class);
+        FileDisplayActivity fda = activityRule.launchActivity(intent);
+
+        ProfileBottomSheetDialog sut = new ProfileBottomSheetDialog(fda,
+                                                                    user,
+                                                                    hoverCard);
+
+        fda.runOnUiThread(sut::show);
+
+        waitForIdleSync();
+
+        screenshot(sut.getWindow().getDecorView());
+    }
+
     private FileDisplayActivity showDialog(DialogFragment dialog) {
         Intent intent = new Intent(targetContext, FileDisplayActivity.class);
-        FileDisplayActivity sut = activityRule.launchActivity(intent);
 
+        FileDisplayActivity sut = activityRule.getActivity();
+
+        if (sut == null) {
+            sut = activityRule.launchActivity(intent);
+        }
+
+        return showDialog(sut, dialog);
+    }
+
+    private FileDisplayActivity showDialog(FileDisplayActivity sut, DialogFragment dialog) {
         dialog.show(sut.getSupportFragmentManager(), "");
 
         getInstrumentation().waitForIdleSync();

@@ -35,13 +35,16 @@ import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.nextcloud.client.account.User
 import com.nextcloud.client.account.UserAccountManager
+import com.nextcloud.client.files.downloader.PostUploadAction
+import com.nextcloud.client.files.downloader.TransferManagerConnection
+import com.nextcloud.client.files.downloader.UploadRequest
+import com.nextcloud.client.files.downloader.UploadTrigger
 import com.owncloud.android.R
 import com.owncloud.android.datamodel.ArbitraryDataProvider
 import com.owncloud.android.datamodel.FileDataStorageManager
 import com.owncloud.android.datamodel.OCFile
-import com.owncloud.android.files.services.FileUploader
+import com.owncloud.android.files.services.NameCollisionPolicy
 import com.owncloud.android.lib.common.utils.Log_OC
-import com.owncloud.android.operations.UploadFileOperation
 import com.owncloud.android.services.OperationsService
 import com.owncloud.android.services.OperationsService.OperationsServiceBinder
 import com.owncloud.android.ui.activity.ContactsPreferenceActivity
@@ -67,9 +70,9 @@ class ContactsBackupWork(
 
     companion object {
         val TAG = ContactsBackupWork::class.java.simpleName
-        const val ACCOUNT = "account"
-        const val FORCE = "force"
-        const val JOB_INTERVAL_MS: Long = 24 * 60 * 60 * 1000
+        const val KEY_ACCOUNT = "account"
+        const val KEY_FORCE = "force"
+        const val JOB_INTERVAL_MS: Long = 24L * 60L * 60L * 1000L
         const val BUFFER_SIZE = 1024
     }
 
@@ -78,7 +81,7 @@ class ContactsBackupWork(
 
     @Suppress("ReturnCount") // pre-existing issue
     override fun doWork(): Result {
-        val accountName = inputData.getString(ACCOUNT) ?: ""
+        val accountName = inputData.getString(KEY_ACCOUNT) ?: ""
         if (TextUtils.isEmpty(accountName)) { // no account provided
             return Result.failure()
         }
@@ -91,7 +94,7 @@ class ContactsBackupWork(
             user,
             ContactsPreferenceActivity.PREFERENCE_CONTACTS_LAST_BACKUP
         )
-        val force = inputData.getBoolean(FORCE, false)
+        val force = inputData.getBoolean(KEY_FORCE, false)
         if (force || lastExecution + JOB_INTERVAL_MS < Calendar.getInstance().timeInMillis) {
             Log_OC.d(TAG, "start contacts backup job")
             val backupFolder: String = resources.getString(R.string.contacts_backup_folder) + OCFile.PATH_SEPARATOR
@@ -158,25 +161,25 @@ class ContactsBackupWork(
                 }
             }
         }
-        FileUploader.uploadNewFile(
-            applicationContext,
-            user.toPlatformAccount(),
-            file.absolutePath,
-            backupFolder + filename,
-            FileUploader.LOCAL_BEHAVIOUR_MOVE,
-            null,
-            true,
-            UploadFileOperation.CREATED_BY_USER,
-            false,
-            false,
-            FileUploader.NameCollisionPolicy.RENAME
-        )
+
+        val request = UploadRequest.Builder(user, file.absolutePath, backupFolder + file.name)
+            .setFileSize(file.length())
+            .setNameConflicPolicy(NameCollisionPolicy.RENAME)
+            .setCreateRemoteFolder(true)
+            .setTrigger(UploadTrigger.USER)
+            .setPostAction(PostUploadAction.MOVE_TO_APP)
+            .setRequireWifi(false)
+            .setRequireCharging(false)
+            .build()
+
+        val connection = TransferManagerConnection(applicationContext, user)
+        connection.enqueue(request)
     }
 
     private fun expireFiles(daysToExpire: Int, backupFolderString: String, user: User) { // -1 disables expiration
         if (daysToExpire > -1) {
             val storageManager = FileDataStorageManager(
-                user.toPlatformAccount(),
+                user,
                 applicationContext.getContentResolver()
             )
             val backupFolder: OCFile = storageManager.getFileByPath(backupFolderString)
@@ -207,7 +210,7 @@ class ContactsBackupWork(
 
     @Suppress("NestedBlockDepth")
     private fun getContactFromCursor(cursor: Cursor): String {
-        val lookupKey = cursor.getString(cursor.getColumnIndex(ContactsContract.Contacts.LOOKUP_KEY))
+        val lookupKey = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts.LOOKUP_KEY))
         val uri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_VCARD_URI, lookupKey)
         var vCard = ""
         var inputStream: InputStream? = null

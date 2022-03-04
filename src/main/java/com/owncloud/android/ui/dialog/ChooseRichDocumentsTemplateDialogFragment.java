@@ -60,8 +60,6 @@ import com.owncloud.android.utils.theme.ThemeButtonUtils;
 import com.owncloud.android.utils.theme.ThemeColorUtils;
 import com.owncloud.android.utils.theme.ThemeTextInputUtils;
 
-import org.parceler.Parcels;
-
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
@@ -240,7 +238,7 @@ public class ChooseRichDocumentsTemplateDialogFragment extends DialogFragment im
     private void prefillFilenameIfEmpty(Template template) {
         String name = binding.filename.getText().toString();
         if (name.isEmpty() || name.equalsIgnoreCase(DOT + template.getExtension())) {
-            binding.filename.setText(String.format("%s.%s", template.name, template.extension));
+            binding.filename.setText(String.format("%s.%s", template.getName(), template.getExtension()));
         }
         binding.filename.setSelection(binding.filename.getText().toString().lastIndexOf('.'));
     }
@@ -287,7 +285,7 @@ public class ChooseRichDocumentsTemplateDialogFragment extends DialogFragment im
 
                     if (chooseTemplateDialogFragmentWeakReference.get() != null) {
                         FileDataStorageManager storageManager = new FileDataStorageManager(
-                            user.toPlatformAccount(),
+                            user,
                             chooseTemplateDialogFragmentWeakReference.get().requireContext().getContentResolver());
                         storageManager.saveFile(temp);
                         file = storageManager.getFileByPath(path);
@@ -310,14 +308,14 @@ public class ChooseRichDocumentsTemplateDialogFragment extends DialogFragment im
 
             if (fragment != null && fragment.isAdded()) {
                 if (url.isEmpty()) {
-                    DisplayUtils.showSnackMessage(fragment.binding.list, "Error creating file from template");
+                    DisplayUtils.showSnackMessage(fragment.binding.list, R.string.error_creating_file_from_template);
                 } else {
                     Intent collaboraWebViewIntent = new Intent(MainApp.getAppContext(), RichDocumentsEditorWebView.class);
                     collaboraWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_TITLE, "Collabora");
                     collaboraWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_URL, url);
                     collaboraWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_FILE, file);
                     collaboraWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_SHOW_SIDEBAR, false);
-                    collaboraWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_TEMPLATE, Parcels.wrap(template));
+                    collaboraWebViewIntent.putExtra(ExternalSiteWebView.EXTRA_TEMPLATE, template);
                     fragment.startActivity(collaboraWebViewIntent);
 
                     fragment.dismiss();

@@ -30,6 +30,7 @@ import com.owncloud.android.datamodel.OCFile;
 import com.owncloud.android.datamodel.UploadsStorageManager;
 import com.owncloud.android.db.OCUpload;
 import com.owncloud.android.files.services.FileUploader;
+import com.owncloud.android.files.services.NameCollisionPolicy;
 import com.owncloud.android.lib.common.operations.RemoteOperationResult;
 import com.owncloud.android.operations.RefreshFolderOperation;
 import com.owncloud.android.operations.RemoveFileOperation;
@@ -42,6 +43,10 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import androidx.annotation.NonNull;
 
@@ -103,7 +108,7 @@ public class UploadIT extends AbstractOnServerIT {
                                                                   false,
                                                                   true,
                                                                   getStorageManager(),
-                                                                  account,
+                                                                  user,
                                                                   targetContext)
             .execute(client);
 
@@ -113,8 +118,9 @@ public class UploadIT extends AbstractOnServerIT {
                                     false,
                                     account,
                                     false,
-                                    targetContext)
-                .execute(client, getStorageManager());
+                                    targetContext,
+                                    getStorageManager())
+                .execute(client);
         }
     }
 
@@ -229,18 +235,19 @@ public class UploadIT extends AbstractOnServerIT {
             user,
             null,
             ocUpload,
-            FileUploader.NameCollisionPolicy.DEFAULT,
+            NameCollisionPolicy.DEFAULT,
             FileUploader.LOCAL_BEHAVIOUR_COPY,
             targetContext,
             false,
-            true
+            true,
+            getStorageManager()
         );
         newUpload.setRemoteFolderToBeCreated();
         newUpload.addRenameUploadListener(() -> {
             // dummy
         });
 
-        RemoteOperationResult result = newUpload.execute(client, getStorageManager());
+        RemoteOperationResult result = newUpload.execute(client);
         assertFalse(result.toString(), result.isSuccess());
         assertEquals(RemoteOperationResult.ResultCode.DELAYED_FOR_CHARGING, result.getCode());
     }
@@ -276,18 +283,19 @@ public class UploadIT extends AbstractOnServerIT {
             user,
             null,
             ocUpload,
-            FileUploader.NameCollisionPolicy.DEFAULT,
+            NameCollisionPolicy.DEFAULT,
             FileUploader.LOCAL_BEHAVIOUR_COPY,
             targetContext,
             false,
-            true
+            true,
+            getStorageManager()
         );
         newUpload.setRemoteFolderToBeCreated();
         newUpload.addRenameUploadListener(() -> {
             // dummy
         });
 
-        RemoteOperationResult result = newUpload.execute(client, getStorageManager());
+        RemoteOperationResult result = newUpload.execute(client);
         assertTrue(result.toString(), result.isSuccess());
     }
 
@@ -315,18 +323,19 @@ public class UploadIT extends AbstractOnServerIT {
             user,
             null,
             ocUpload,
-            FileUploader.NameCollisionPolicy.DEFAULT,
+            NameCollisionPolicy.DEFAULT,
             FileUploader.LOCAL_BEHAVIOUR_COPY,
             targetContext,
             true,
-            false
+            false,
+            getStorageManager()
         );
         newUpload.setRemoteFolderToBeCreated();
         newUpload.addRenameUploadListener(() -> {
             // dummy
         });
 
-        RemoteOperationResult result = newUpload.execute(client, getStorageManager());
+        RemoteOperationResult result = newUpload.execute(client);
         assertFalse(result.toString(), result.isSuccess());
         assertEquals(RemoteOperationResult.ResultCode.DELAYED_FOR_WIFI, result.getCode());
     }
@@ -344,18 +353,19 @@ public class UploadIT extends AbstractOnServerIT {
             user,
             null,
             ocUpload,
-            FileUploader.NameCollisionPolicy.DEFAULT,
+            NameCollisionPolicy.DEFAULT,
             FileUploader.LOCAL_BEHAVIOUR_COPY,
             targetContext,
             true,
-            false
+            false,
+            getStorageManager()
         );
         newUpload.setRemoteFolderToBeCreated();
         newUpload.addRenameUploadListener(() -> {
             // dummy
         });
 
-        RemoteOperationResult result = newUpload.execute(client, getStorageManager());
+        RemoteOperationResult result = newUpload.execute(client);
         assertTrue(result.toString(), result.isSuccess());
 
         // cleanup
@@ -363,8 +373,9 @@ public class UploadIT extends AbstractOnServerIT {
                                 false,
                                 account,
                                 false,
-                                targetContext)
-            .execute(client, getStorageManager());
+                                targetContext,
+                                getStorageManager())
+            .execute(client);
     }
 
     @Test
@@ -392,20 +403,76 @@ public class UploadIT extends AbstractOnServerIT {
             user,
             null,
             ocUpload,
-            FileUploader.NameCollisionPolicy.DEFAULT,
+            NameCollisionPolicy.DEFAULT,
             FileUploader.LOCAL_BEHAVIOUR_COPY,
             targetContext,
             true,
-            false
+            false,
+            getStorageManager()
         );
         newUpload.setRemoteFolderToBeCreated();
         newUpload.addRenameUploadListener(() -> {
             // dummy
         });
 
-        RemoteOperationResult result = newUpload.execute(client, getStorageManager());
+        RemoteOperationResult result = newUpload.execute(client);
         assertFalse(result.toString(), result.isSuccess());
         assertEquals(RemoteOperationResult.ResultCode.DELAYED_FOR_WIFI, result.getCode());
+    }
+
+    @Test
+    public void testCreationAndUploadTimestamp() throws IOException {
+        File file = getDummyFile("/empty.txt");
+        String remotePath = "/testFile.txt";
+        OCUpload ocUpload = new OCUpload(file.getAbsolutePath(), remotePath, account.name);
+
+        long creationTimestamp = Files.readAttributes(file.toPath(), BasicFileAttributes.class)
+            .creationTime()
+            .to(TimeUnit.SECONDS);
+
+        // wait a bit to simulate a later upload, so we can verify if creation date is set correct
+        shortSleep();
+
+        assertTrue(
+            new UploadFileOperation(
+                uploadsStorageManager,
+                connectivityServiceMock,
+                powerManagementServiceMock,
+                user,
+                null,
+                ocUpload,
+                NameCollisionPolicy.DEFAULT,
+                FileUploader.LOCAL_BEHAVIOUR_COPY,
+                targetContext,
+                false,
+                false,
+                getStorageManager()
+            )
+                .setRemoteFolderToBeCreated()
+                .execute(client)
+                .isSuccess()
+                  );
+
+        long uploadTimestamp = System.currentTimeMillis() / 1000;
+
+        // RefreshFolderOperation
+        assertTrue(new RefreshFolderOperation(getStorageManager().getFileByDecryptedRemotePath("/"),
+                                              System.currentTimeMillis() / 1000,
+                                              false,
+                                              false,
+                                              getStorageManager(),
+                                              user,
+                                              targetContext).execute(client).isSuccess());
+
+        List<OCFile> files = getStorageManager().getFolderContent(getStorageManager().getFileByDecryptedRemotePath("/"),
+                                                                  false);
+
+        OCFile ocFile = files.get(0);
+
+        assertEquals(remotePath, ocFile.getRemotePath());
+        assertEquals(creationTimestamp, ocFile.getCreationTimestamp());
+        assertTrue(uploadTimestamp - 10 < ocFile.getUploadTimestamp() ||
+                       uploadTimestamp + 10 > ocFile.getUploadTimestamp());
     }
 
     private void verifyStoragePath(OCFile file) {

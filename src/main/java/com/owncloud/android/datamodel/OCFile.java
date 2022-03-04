@@ -41,6 +41,7 @@ import java.io.File;
 import java.util.List;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.content.FileProvider;
 import third_parties.daveKoeller.AlphanumComparator;
@@ -61,8 +62,10 @@ public class OCFile implements Parcelable, Comparable<OCFile>, ServerFileInterfa
     private long fileLength;
     private long creationTimestamp; // UNIX timestamp of the time the file was created
     private long modificationTimestamp; // UNIX timestamp of the file modification time
-    /** UNIX timestamp of the modification time, corresponding to the value returned by the server
-     * in the last synchronization of THE CONTENTS of this file.
+    private long uploadTimestamp;
+    /**
+     * UNIX timestamp of the modification time, corresponding to the value returned by the server in the last
+     * synchronization of THE CONTENTS of this file.
      */
     private long modificationTimestampAtLastSyncForData;
     private String remotePath;
@@ -120,12 +123,6 @@ public class OCFile implements Parcelable, Comparable<OCFile>, ServerFileInterfa
             throw new IllegalArgumentException("Trying to create a OCFile with a non valid remote path: " + path);
         }
         remotePath = path;
-    }
-
-    @VisibleForTesting
-    public OCFile(String path, String remoteId) {
-        this(path);
-        this.remoteId = remoteId;
     }
 
     /**
@@ -478,13 +475,13 @@ public class OCFile implements Parcelable, Comparable<OCFile>, ServerFileInterfa
     @Override
     public int compareTo(@NonNull OCFile another) {
         if (isFolder() && another.isFolder()) {
-            return new AlphanumComparator().compare(this, another);
+            return AlphanumComparator.compare(this, another);
         } else if (isFolder()) {
             return -1;
         } else if (another.isFolder()) {
             return 1;
         }
-        return new AlphanumComparator().compare(this, another);
+        return AlphanumComparator.compare(this, another);
     }
 
     @Override
@@ -551,8 +548,13 @@ public class OCFile implements Parcelable, Comparable<OCFile>, ServerFileInterfa
      *
      * @return file fileId, unique within the instance
      */
+    @Nullable
     public String getLocalId() {
-        return getRemoteId().substring(0, 8).replaceAll("^0*", "");
+        if (getRemoteId() != null) {
+            return getRemoteId().substring(0, 8).replaceAll("^0*", "");
+        } else {
+            return null;
+        }
     }
 
     public boolean isInConflict() {
@@ -603,8 +605,15 @@ public class OCFile implements Parcelable, Comparable<OCFile>, ServerFileInterfa
         return this.creationTimestamp;
     }
 
+    /**
+     * @return unix timestamp in milliseconds
+     */
     public long getModificationTimestamp() {
         return this.modificationTimestamp;
+    }
+
+    public long getUploadTimestamp() {
+        return this.uploadTimestamp;
     }
 
     public long getModificationTimestampAtLastSyncForData() {

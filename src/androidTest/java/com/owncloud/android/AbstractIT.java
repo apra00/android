@@ -1,6 +1,5 @@
 package com.owncloud.android;
 
-import android.Manifest;
 import android.accounts.Account;
 import android.accounts.AccountManager;
 import android.accounts.AuthenticatorException;
@@ -8,12 +7,14 @@ import android.accounts.OperationCanceledException;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.View;
 
 import com.facebook.testing.screenshot.Screenshot;
 import com.facebook.testing.screenshot.internal.TestNameDetector;
+import com.nextcloud.client.GrantStoragePermissionRule;
 import com.nextcloud.client.account.User;
 import com.nextcloud.client.account.UserAccountManager;
 import com.nextcloud.client.account.UserAccountManagerImpl;
@@ -23,12 +24,14 @@ import com.nextcloud.client.network.Connectivity;
 import com.nextcloud.client.network.ConnectivityService;
 import com.nextcloud.client.preferences.AppPreferencesImpl;
 import com.nextcloud.client.preferences.DarkMode;
+import com.nextcloud.common.NextcloudClient;
 import com.nextcloud.java.util.Optional;
 import com.owncloud.android.datamodel.FileDataStorageManager;
 import com.owncloud.android.datamodel.OCFile;
 import com.owncloud.android.datamodel.UploadsStorageManager;
 import com.owncloud.android.db.OCUpload;
 import com.owncloud.android.files.services.FileUploader;
+import com.owncloud.android.files.services.NameCollisionPolicy;
 import com.owncloud.android.lib.common.OwnCloudClient;
 import com.owncloud.android.lib.common.OwnCloudClientFactory;
 import com.owncloud.android.lib.common.accounts.AccountUtils;
@@ -44,6 +47,7 @@ import org.apache.commons.io.FileUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Rule;
+import org.junit.rules.TestRule;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -57,7 +61,6 @@ import androidx.fragment.app.DialogFragment;
 import androidx.test.espresso.contrib.DrawerActions;
 import androidx.test.espresso.intent.rule.IntentsTestRule;
 import androidx.test.platform.app.InstrumentationRegistry;
-import androidx.test.rule.GrantPermissionRule;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
 import androidx.test.runner.lifecycle.Stage;
 
@@ -74,10 +77,10 @@ import static org.junit.Assert.assertTrue;
 
 public abstract class AbstractIT {
     @Rule
-    public final GrantPermissionRule permissionRule = GrantPermissionRule.grant(
-        Manifest.permission.WRITE_EXTERNAL_STORAGE);
+    public final TestRule permissionRule = GrantStoragePermissionRule.grant();
 
     protected static OwnCloudClient client;
+    protected static NextcloudClient nextcloudClient;
     protected static Account account;
     protected static User user;
     protected static Context targetContext;
@@ -87,7 +90,7 @@ public abstract class AbstractIT {
     protected Activity currentActivity;
 
     protected FileDataStorageManager fileDataStorageManager =
-        new FileDataStorageManager(account, targetContext.getContentResolver());
+        new FileDataStorageManager(user, targetContext.getContentResolver());
 
     @BeforeClass
     public static void beforeAll() {
@@ -102,13 +105,13 @@ public abstract class AbstractIT {
                 }
             }
 
-            Account temp = new Account("test@https://server.com", MainApp.getAccountType(targetContext));
+            Account temp = new Account("test@https://nextcloud.localhost", MainApp.getAccountType(targetContext));
             platformAccountManager.addAccountExplicitly(temp, "password", null);
-            platformAccountManager.setUserData(temp, AccountUtils.Constants.KEY_OC_BASE_URL, "https://server.com");
+            platformAccountManager.setUserData(temp, AccountUtils.Constants.KEY_OC_BASE_URL, "https://nextcloud.localhost");
             platformAccountManager.setUserData(temp, KEY_USER_ID, "test");
 
             final UserAccountManager userAccountManager = UserAccountManagerImpl.fromContext(targetContext);
-            account = userAccountManager.getAccountByName("test@https://server.com");
+            account = userAccountManager.getAccountByName("test@https://nextcloud.localhost");
 
             if (account == null) {
                 throw new ActivityNotFoundException();
@@ -118,6 +121,7 @@ public abstract class AbstractIT {
             user = optionalUser.orElseThrow(IllegalAccessError::new);
 
             client = OwnCloudClientFactory.createOwnCloudClient(account, targetContext);
+            nextcloudClient = OwnCloudClientFactory.createNextcloudClient(account, targetContext);
         } catch (OperationCanceledException e) {
             e.printStackTrace();
         } catch (AuthenticatorException e) {
@@ -133,7 +137,7 @@ public abstract class AbstractIT {
         // color
         String colorParameter = arguments.getString("COLOR");
         if (!TextUtils.isEmpty(colorParameter)) {
-            FileDataStorageManager fileDataStorageManager = new FileDataStorageManager(account,
+            FileDataStorageManager fileDataStorageManager = new FileDataStorageManager(user,
                                                                                        targetContext.getContentResolver());
 
             String colorHex = null;
@@ -153,6 +157,10 @@ public abstract class AbstractIT {
 
                 case "black":
                     colorHex = "#000000";
+                    break;
+
+                case "lightgreen":
+                    colorHex = "#aaff00";
                     break;
 
                 default:
@@ -213,7 +221,7 @@ public abstract class AbstractIT {
     }
 
     protected static File getDummyFile(String name) throws IOException {
-        File file = new File(FileStorageUtils.getTemporalPath(account.name) + File.separator + name);
+        File file = new File(FileStorageUtils.getInternalTemporalPath(account.name, targetContext) + File.separator + name);
 
         if (file.exists()) {
             return file;
@@ -311,8 +319,8 @@ public abstract class AbstractIT {
     }
 
     public OCFile createFolder(String remotePath) {
-        TestCase.assertTrue(new CreateFolderOperation(remotePath, user, targetContext)
-                                .execute(client, getStorageManager())
+        TestCase.assertTrue(new CreateFolderOperation(remotePath, user, targetContext, getStorageManager())
+                                .execute(client)
                                 .isSuccess());
 
         return getStorageManager().getFileByDecryptedRemotePath(remotePath);
@@ -360,11 +368,12 @@ public abstract class AbstractIT {
             user,
             null,
             ocUpload,
-            FileUploader.NameCollisionPolicy.DEFAULT,
+            NameCollisionPolicy.DEFAULT,
             FileUploader.LOCAL_BEHAVIOUR_COPY,
             targetContext,
             false,
-            false
+            false,
+            getStorageManager()
         );
         newUpload.addRenameUploadListener(() -> {
             // dummy
@@ -372,7 +381,7 @@ public abstract class AbstractIT {
 
         newUpload.setRemoteFolderToBeCreated();
 
-        RemoteOperationResult result = newUpload.execute(client, getStorageManager());
+        RemoteOperationResult result = newUpload.execute(client);
         assertTrue(result.getLogMessage(), result.isSuccess());
     }
 
@@ -381,11 +390,15 @@ public abstract class AbstractIT {
     }
 
     protected void screenshot(View view, String prefix) {
-        Screenshot.snap(view).setName(createName(prefix)).record();
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            Screenshot.snap(view).setName(createName(prefix)).record();
+        }
     }
 
     protected void screenshot(Activity sut) {
-        Screenshot.snapActivity(sut).setName(createName()).record();
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            Screenshot.snapActivity(sut).setName(createName()).record();
+        }
     }
 
     protected void screenshot(DialogFragment dialogFragment, String prefix) {

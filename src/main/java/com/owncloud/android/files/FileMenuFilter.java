@@ -28,7 +28,6 @@ import android.view.MenuItem;
 
 import com.google.gson.Gson;
 import com.nextcloud.client.account.User;
-import com.nextcloud.client.device.DeviceInfo;
 import com.owncloud.android.R;
 import com.owncloud.android.datamodel.ArbitraryDataProvider;
 import com.owncloud.android.datamodel.OCFile;
@@ -64,7 +63,6 @@ public class FileMenuFilter {
     private ComponentsGetter componentsGetter;
     private Context context;
     private boolean overflowMenu;
-    private DeviceInfo deviceInfo;
     private User user;
 
     /**
@@ -75,7 +73,6 @@ public class FileMenuFilter {
      * @param componentsGetter  Accessor to app components, needed to access synchronization services
      * @param context           Android {@link Context}, needed to access build setup resources.
      * @param overflowMenu      true if the overflow menu items are being filtered
-     * @param deviceInfo        Device information provider
      * @param user              currently active user
      */
     public FileMenuFilter(int numberOfAllFiles,
@@ -83,7 +80,6 @@ public class FileMenuFilter {
                           ComponentsGetter componentsGetter,
                           Context context,
                           boolean overflowMenu,
-                          DeviceInfo deviceInfo,
                           User user
     ) {
         this.numberOfAllFiles = numberOfAllFiles;
@@ -91,7 +87,6 @@ public class FileMenuFilter {
         this.componentsGetter = componentsGetter;
         this.context = context;
         this.overflowMenu = overflowMenu;
-        this.deviceInfo = deviceInfo;
         this.user = user;
     }
 
@@ -108,10 +103,9 @@ public class FileMenuFilter {
                           ComponentsGetter componentsGetter,
                           Context context,
                           boolean overflowMenu,
-                          DeviceInfo deviceInfo,
                           User user
     ) {
-        this(1, Collections.singletonList(file), componentsGetter, context, overflowMenu, deviceInfo, user);
+        this(1, Collections.singletonList(file), componentsGetter, context, overflowMenu, user);
     }
 
     /**
@@ -199,7 +193,7 @@ public class FileMenuFilter {
         filterCancelSync(toShow, toHide, synchronizing);
         filterSync(toShow, toHide, synchronizing);
         filterShareFile(toShow, toHide, capability);
-        filterSendFiles(toShow, toHide);
+        filterSendFiles(toShow, toHide, inSingleFileFragment);
         filterDetails(toShow, toHide);
         filterFavorite(toShow, toHide, synchronizing);
         filterUnfavorite(toShow, toHide, synchronizing);
@@ -219,12 +213,18 @@ public class FileMenuFilter {
         }
     }
 
-    private void filterSendFiles(List<Integer> toShow, List<Integer> toHide) {
-        if (containsEncryptedFile() || isSingleSelection() || overflowMenu || !anyFileDown() ||
-            SEND_OFF.equalsIgnoreCase(context.getString(R.string.send_files_to_other_apps))) {
-            toHide.add(R.id.action_send_file);
-        } else {
+    private void filterSendFiles(List<Integer> toShow, List<Integer> toHide, boolean inSingleFileFragment) {
+        boolean show = true;
+        if (containsEncryptedFile() || overflowMenu || SEND_OFF.equalsIgnoreCase(context.getString(R.string.send_files_to_other_apps))) {
+            show = false;
+        }
+        if (!inSingleFileFragment && (isSingleSelection() || !anyFileDown())) {
+            show = false;
+        }
+        if (show) {
             toShow.add(R.id.action_send_file);
+        } else {
+            toHide.add(R.id.action_send_file);
         }
     }
 
@@ -282,7 +282,7 @@ public class FileMenuFilter {
                             List<Integer> toHide,
                             OCCapability capability
     ) {
-        if (deviceInfo.editorSupported() || files.iterator().next().isEncrypted()) {
+        if (files.iterator().next().isEncrypted()) {
             toHide.add(R.id.action_edit);
             return;
         }
@@ -312,14 +312,14 @@ public class FileMenuFilter {
 
         DirectEditing directEditing = new Gson().fromJson(json, DirectEditing.class);
 
-        for (Editor editor : directEditing.editors.values()) {
-            if (editor.mimetypes.contains(mimeType)) {
+        for (Editor editor : directEditing.getEditors().values()) {
+            if (editor.getMimetypes().contains(mimeType)) {
                 return editor;
             }
         }
 
-        for (Editor editor : directEditing.editors.values()) {
-            if (editor.optionalMimetypes.contains(mimeType)) {
+        for (Editor editor : directEditing.getEditors().values()) {
+            if (editor.getOptionalMimetypes().contains(mimeType)) {
                 return editor;
             }
         }

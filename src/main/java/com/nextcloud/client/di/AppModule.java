@@ -51,7 +51,11 @@ import com.nextcloud.client.migrations.MigrationsManagerImpl;
 import com.nextcloud.client.network.ClientFactory;
 import com.nextcloud.client.notifications.AppNotificationManager;
 import com.nextcloud.client.notifications.AppNotificationManagerImpl;
+import com.nextcloud.client.preferences.AppPreferences;
+import com.nextcloud.client.utils.Throttler;
+import com.owncloud.android.authentication.PassCodeManager;
 import com.owncloud.android.datamodel.ArbitraryDataProvider;
+import com.owncloud.android.datamodel.FileDataStorageManager;
 import com.owncloud.android.datamodel.UploadsStorageManager;
 import com.owncloud.android.ui.activities.data.activities.ActivitiesRepository;
 import com.owncloud.android.ui.activities.data.activities.ActivitiesServiceApi;
@@ -135,7 +139,14 @@ class AppModule {
         return new UploadsStorageManager(currentAccountProvider, context.getContentResolver());
     }
 
-    @Provides CurrentAccountProvider currentAccountProvider(UserAccountManager accountManager) {
+    @Provides
+    FileDataStorageManager fileDataStorageManager(CurrentAccountProvider currentAccountProvider,
+                                                  Context context) {
+        return new FileDataStorageManager(currentAccountProvider.getUser(), context.getContentResolver());
+    }
+
+    @Provides
+    CurrentAccountProvider currentAccountProvider(UserAccountManager accountManager) {
         return accountManager;
     }
 
@@ -222,5 +233,16 @@ class AppModule {
     @Provides
     LocalBroadcastManager localBroadcastManager(Context context) {
         return LocalBroadcastManager.getInstance(context);
+    }
+
+    @Provides
+    Throttler throttler(Clock clock) {
+        return new Throttler(clock);
+    }
+
+    @Provides
+    @Singleton
+    PassCodeManager passCodeManager(AppPreferences preferences, Clock clock) {
+        return new PassCodeManager(preferences, clock);
     }
 }

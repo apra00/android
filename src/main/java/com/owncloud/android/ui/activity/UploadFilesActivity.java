@@ -24,6 +24,7 @@ import android.accounts.Account;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.os.Environment;
 import android.view.Menu;
@@ -36,6 +37,8 @@ import android.widget.Spinner;
 import android.widget.TextView;
 
 import com.google.android.material.button.MaterialButton;
+import com.google.android.material.snackbar.Snackbar;
+import com.nextcloud.client.account.User;
 import com.nextcloud.client.di.Injectable;
 import com.nextcloud.client.preferences.AppPreferences;
 import com.owncloud.android.R;
@@ -50,10 +53,13 @@ import com.owncloud.android.ui.dialog.LocalStoragePathPickerDialogFragment;
 import com.owncloud.android.ui.dialog.SortingOrderDialogFragment;
 import com.owncloud.android.ui.fragment.ExtendedListFragment;
 import com.owncloud.android.ui.fragment.LocalFileListFragment;
+import com.owncloud.android.utils.DisplayUtils;
 import com.owncloud.android.utils.FileSortOrder;
+import com.owncloud.android.utils.PermissionUtil;
 import com.owncloud.android.utils.theme.ThemeButtonUtils;
 import com.owncloud.android.utils.theme.ThemeColorUtils;
 import com.owncloud.android.utils.theme.ThemeDrawableUtils;
+import com.owncloud.android.utils.theme.ThemeSnackbarUtils;
 import com.owncloud.android.utils.theme.ThemeToolbarUtils;
 import com.owncloud.android.utils.theme.ThemeUtils;
 
@@ -71,7 +77,7 @@ import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
 
-import static com.owncloud.android.ui.activity.FileActivity.EXTRA_ACCOUNT;
+import static com.owncloud.android.ui.activity.FileActivity.EXTRA_USER;
 
 /**
  * Displays local files and let the user choose what of them wants to upload to the current ownCloud account.
@@ -116,12 +122,12 @@ public class UploadFilesActivity extends DrawerActivity implements LocalFileList
      * onActivityResult() method will be called with the given requestCode.
      *
      * @param activity    the activity which should call the upload activity for a result
-     * @param account     the account for which the upload activity is called
+     * @param user        the user for which the upload activity is called
      * @param requestCode If >= 0, this code will be returned in onActivityResult()
      */
-    public static void startUploadActivityForResult(Activity activity, Account account, int requestCode) {
+    public static void startUploadActivityForResult(Activity activity, User user, int requestCode) {
         Intent action = new Intent(activity, UploadFilesActivity.class);
-        action.putExtra(EXTRA_ACCOUNT, account);
+        action.putExtra(EXTRA_USER, user);
         action.putExtra(REQUEST_CODE_KEY, requestCode);
         activity.startActivityForResult(action, requestCode);
     }
@@ -289,29 +295,47 @@ public class UploadFilesActivity extends DrawerActivity implements LocalFileList
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         boolean retval = true;
-        switch (item.getItemId()) {
-            case android.R.id.home: {
-                if (mCurrentDir != null && mCurrentDir.getParentFile() != null) {
-                    onBackPressed();
-                }
-                break;
+        int itemId = item.getItemId();
+
+        if (itemId == android.R.id.home) {
+            if (mCurrentDir != null && mCurrentDir.getParentFile() != null) {
+                onBackPressed();
             }
-            case R.id.action_select_all: {
-                item.setChecked(!item.isChecked());
-                mSelectAll = item.isChecked();
-                setSelectAllMenuItem(item, mSelectAll);
-                mFileListFragment.selectAllFiles(item.isChecked());
-                break;
-            }
-            case R.id.action_choose_storage_path: {
-                showLocalStoragePathPickerDialog();
-                break;
-            }
-            default:
-                retval = super.onOptionsItemSelected(item);
-                break;
+        } else if (itemId == R.id.action_select_all) {
+            mSelectAll = !item.isChecked();
+            item.setChecked(mSelectAll);
+            mFileListFragment.selectAllFiles(mSelectAll);
+            setSelectAllMenuItem(item, mSelectAll);
+        } else if (itemId == R.id.action_choose_storage_path) {
+            checkLocalStoragePathPickerPermission();
+        } else {
+            retval = super.onOptionsItemSelected(item);
         }
+
         return retval;
+    }
+
+    private void checkLocalStoragePathPickerPermission() {
+        if (!PermissionUtil.checkExternalStoragePermission(this)) {
+            // Check if we should show an explanation
+            if (PermissionUtil.shouldShowRequestPermissionRationale(this,
+                                                                    PermissionUtil.getExternalStoragePermission())) {
+                // Show explanation to the user and then request permission
+                Snackbar snackbar = Snackbar.make(findViewById(android.R.id.content),
+                                                  R.string.permission_storage_access,
+                                                  Snackbar.LENGTH_INDEFINITE)
+                    .setAction(R.string.common_ok, v -> PermissionUtil.requestExternalStoragePermission(this));
+                ThemeSnackbarUtils.colorSnackbar(this, snackbar);
+                snackbar.show();
+            } else {
+                // No explanation needed, request the permission.
+                PermissionUtil.requestExternalStoragePermission(this);
+            }
+
+            return;
+        }
+
+        showLocalStoragePathPickerDialog();
     }
 
     private void showLocalStoragePathPickerDialog() {
@@ -323,8 +347,25 @@ public class UploadFilesActivity extends DrawerActivity implements LocalFileList
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+
+        if (requestCode == PermissionUtil.PERMISSIONS_EXTERNAL_STORAGE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                // permission was granted
+                showLocalStoragePathPickerDialog();
+            } else {
+                DisplayUtils.showSnackMessage(this, R.string.permission_storage_access);
+            }
+        } else {
+            super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        }
+    }
+
+    @Override
     public void onSortingOrderChosen(FileSortOrder selection) {
-        preferences.setSortOrder(FileSortOrder.Type.uploadFilesView, selection);
+        preferences.setSortOrder(FileSortOrder.Type.localFileListView, selection);
         mFileListFragment.sortFiles(selection);
     }
 
@@ -352,7 +393,7 @@ public class UploadFilesActivity extends DrawerActivity implements LocalFileList
 
             File parentFolder = mCurrentDir.getParentFile();
             if (!parentFolder.canRead()) {
-                showLocalStoragePathPickerDialog();
+                checkLocalStoragePathPickerPermission();
                 return;
             }
 
@@ -415,13 +456,21 @@ public class UploadFilesActivity extends DrawerActivity implements LocalFileList
         return !mDirectories.isEmpty();
     }
 
+    private void updateUploadButtonActive() {
+        final boolean anySelected = mFileListFragment.getCheckedFilesCount() > 0;
+        uploadButton.setEnabled(anySelected);
+    }
+
     private void setSelectAllMenuItem(MenuItem selectAll, boolean checked) {
-        selectAll.setChecked(checked);
-        if (checked) {
-            selectAll.setIcon(R.drawable.ic_select_none);
-        } else {
-            selectAll.setIcon(
-                ThemeDrawableUtils.tintDrawable(R.drawable.ic_select_all, ThemeColorUtils.primaryColor(this)));
+        if (selectAll != null) {
+            selectAll.setChecked(checked);
+            if (checked) {
+                selectAll.setIcon(R.drawable.ic_select_none);
+            } else {
+                selectAll.setIcon(
+                    ThemeDrawableUtils.tintDrawable(R.drawable.ic_select_all, ThemeColorUtils.primaryColor(this)));
+            }
+            updateUploadButtonActive();
         }
     }
 
@@ -450,7 +499,8 @@ public class UploadFilesActivity extends DrawerActivity implements LocalFileList
             // return the list of files (success)
             Intent data = new Intent();
 
-            if (requestCode == FileDisplayActivity.REQUEST_CODE__UPLOAD_FROM_CAMERA) {
+            if (requestCode == FileDisplayActivity.REQUEST_CODE__UPLOAD_FROM_CAMERA ||
+                requestCode == FileDisplayActivity.REQUEST_CODE__UPLOAD_SCAN_DOC_FROM_CAMERA) {
                 data.putExtra(EXTRA_CHOSEN_FILES, new String[]{filesToUpload[0]});
                 setResult(RESULT_OK_AND_DELETE, data);
 
@@ -551,6 +601,9 @@ public class UploadFilesActivity extends DrawerActivity implements LocalFileList
     @Override
     public void onFileClick(File file) {
         uploadButton.setEnabled(mFileListFragment.getCheckedFilesCount() > 0);
+
+        boolean selectAll = mFileListFragment.getCheckedFilesCount() == mFileListFragment.getFilesCount();
+        setSelectAllMenuItem(mOptionsMenu.findItem(R.id.action_select_all), selectAll);
     }
 
     /**

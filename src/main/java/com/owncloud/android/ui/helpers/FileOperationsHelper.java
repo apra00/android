@@ -6,10 +6,12 @@
  * @author Juan Carlos González Cabrero
  * @author Andy Scherzinger
  * @author Chris Narkiewicz
+ * @author TSI-mc
  *
  * Copyright (C) 2015 ownCloud Inc.
  * Copyright (C) 2018 Andy Scherzinger
  * Copyright (C) 2020 Chris Narkiewicz <hello@ezaquarii.com>
+ * Copyright (C) 2021 TSI-mc
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2,
@@ -35,6 +37,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -66,6 +69,7 @@ import com.owncloud.android.lib.resources.shares.ShareType;
 import com.owncloud.android.lib.resources.status.OCCapability;
 import com.owncloud.android.operations.SynchronizeFileOperation;
 import com.owncloud.android.services.OperationsService;
+import com.owncloud.android.ui.activity.AppScanActivity;
 import com.owncloud.android.ui.activity.ConflictsResolveActivity;
 import com.owncloud.android.ui.activity.ExternalSiteWebView;
 import com.owncloud.android.ui.activity.FileActivity;
@@ -82,6 +86,7 @@ import com.owncloud.android.utils.DisplayUtils;
 import com.owncloud.android.utils.FileStorageUtils;
 import com.owncloud.android.utils.PermissionUtil;
 import com.owncloud.android.utils.UriUtils;
+import com.zynksoftware.documentscanner.ui.DocumentScanner;
 
 import org.greenrobot.eventbus.EventBus;
 
@@ -90,7 +95,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -121,9 +126,9 @@ public class FileOperationsHelper {
     private static final String FILE_EXTENSION_WEBLOC = "webloc";
     public static final int SINGLE_LINK_SIZE = 1;
 
-    private FileActivity fileActivity;
-    private CurrentAccountProvider currentAccount;
-    private ConnectivityService connectivityService;
+    private final FileActivity fileActivity;
+    private final CurrentAccountProvider currentAccount;
+    private final ConnectivityService connectivityService;
 
     /// Identifier of operation in progress which result shouldn't be lost
     private long mWaitingForOpId = Long.MAX_VALUE;
@@ -143,7 +148,7 @@ public class FileOperationsHelper {
         InputStreamReader fr = null;
         BufferedReader br = null;
         try {
-            fr = new InputStreamReader(new FileInputStream(storagePath), Charset.forName("UTF-8"));
+            fr = new InputStreamReader(new FileInputStream(storagePath), StandardCharsets.UTF_8);
             br = new BufferedReader(fr);
 
             String line;
@@ -201,7 +206,7 @@ public class FileOperationsHelper {
     public void startSyncForFileAndIntent(OCFile file, Intent intent) {
         new Thread(() -> {
             User user = fileActivity.getUser().orElseThrow(RuntimeException::new);
-            FileDataStorageManager storageManager = new FileDataStorageManager(fileActivity.getAccount(),
+            FileDataStorageManager storageManager = new FileDataStorageManager(user,
                                                                                fileActivity.getContentResolver());
 
             // check if file is in conflict (this is known due to latest folder refresh)
@@ -246,14 +251,19 @@ public class FileOperationsHelper {
         fileActivity.runOnUiThread(() -> fileActivity.showLoadingDialog(fileActivity.getResources()
                 .getString(R.string.sync_in_progress)));
 
-        SynchronizeFileOperation sfo = new SynchronizeFileOperation(file, null, user, true, fileActivity);
-        RemoteOperationResult result = sfo.execute(storageManager, fileActivity);
+        SynchronizeFileOperation sfo = new SynchronizeFileOperation(file,
+                                                                    null,
+                                                                    user,
+                                                                    true,
+                                                                    fileActivity,
+                                                                    storageManager);
+        RemoteOperationResult result = sfo.execute(fileActivity);
 
         if (result.getCode() == RemoteOperationResult.ResultCode.SYNC_CONFLICT) {
             // ISSUE 5: if the user is not running the app (this is a service!),
             // this can be very intrusive; a notification should be preferred
             Intent intent = ConflictsResolveActivity.createIntent(file,
-                                                                  user.toPlatformAccount(),
+                                                                  user,
                                                                   -1,
                                                                   Intent.FLAG_ACTIVITY_NEW_TASK,
                                                                   fileActivity);
@@ -275,12 +285,20 @@ public class FileOperationsHelper {
         fileActivity.dismissLoadingDialog();
     }
 
+    public boolean canOpenFile(OCFile file) {
+        final Intent openFileWithIntent = createOpenFileIntent(file);
+
+        List<ResolveInfo> launchables = fileActivity.getPackageManager().
+            queryIntentActivities(openFileWithIntent, PackageManager.GET_RESOLVED_FILTER);
+        return !launchables.isEmpty();
+    }
+
     public void openFile(OCFile file) {
         if (file != null) {
             final Intent openFileWithIntent = createOpenFileIntent(file);
 
             List<ResolveInfo> launchables = fileActivity.getPackageManager().
-                    queryIntentActivities(openFileWithIntent, PackageManager.GET_RESOLVED_FILTER);
+                queryIntentActivities(openFileWithIntent, PackageManager.GET_RESOLVED_FILTER);
 
             if (launchables.isEmpty()) {
                 Optional<User> optionalUser = fileActivity.getUser();
@@ -309,19 +327,23 @@ public class FileOperationsHelper {
                 public void run() {
                     User user = currentAccount.getUser();
                     FileDataStorageManager storageManager =
-                            new FileDataStorageManager(user.toPlatformAccount(), fileActivity.getContentResolver());
+                        new FileDataStorageManager(user, fileActivity.getContentResolver());
                     // a fresh object is needed; many things could have occurred to the file
                     // since it was registered to observe again, assuming that local files
                     // are linked to a remote file AT MOST, SOMETHING TO BE DONE;
-                    SynchronizeFileOperation sfo =
-                            new SynchronizeFileOperation(file, null, user, true, fileActivity);
-                    RemoteOperationResult result = sfo.execute(storageManager, fileActivity);
+                    SynchronizeFileOperation sfo = new SynchronizeFileOperation(file,
+                                                                                null,
+                                                                                user,
+                                                                                true,
+                                                                                fileActivity,
+                                                                                storageManager);
+                    RemoteOperationResult result = sfo.execute(fileActivity);
                     fileActivity.dismissLoadingDialog();
                     if (result.getCode() == RemoteOperationResult.ResultCode.SYNC_CONFLICT) {
                         // ISSUE 5: if the user is not running the app (this is a service!),
                         // this can be very intrusive; a notification should be preferred
                         Intent intent = ConflictsResolveActivity.createIntent(file,
-                                                                              user.toPlatformAccount(),
+                                                                              user,
                                                                               -1,
                                                                               Intent.FLAG_ACTIVITY_NEW_TASK,
                                                                               fileActivity);
@@ -394,7 +416,6 @@ public class FileOperationsHelper {
             String guessedMimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(fileExt);
             if (guessedMimeType != null) {
                 openFileWithIntent = new Intent(Intent.ACTION_VIEW);
-                openFileWithIntent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
                 openFileWithIntent.setDataAndType(
                         fileUri,
                         guessedMimeType
@@ -521,6 +542,50 @@ public class FileOperationsHelper {
         }
     }
 
+
+    /**
+     * Helper method to share a file with a known sharee. Starts a request to do it in {@link OperationsService}
+     *
+     * @param file                   The file to share.
+     * @param shareeName             Name (user name or group name) of the target sharee.
+     * @param shareType              The share type determines the sharee type.
+     * @param permissions            Permissions to grant to sharee on the shared file.
+     * @param hideFileDownload       true/false to hide file download
+     * @param password               Password to set for the public link; null or empty string to clear the current
+     *                               password
+     * @param expirationTimeInMillis Expiration date to set. A negative value clears the current expiration date,
+     *                               leaving the link unrestricted. Zero makes no change.
+     * @param note                   note message for the receiver. Null or empty for no message
+     * @param label                  new label
+     */
+    public void shareFileWithSharee(OCFile file, String shareeName, ShareType shareType, int permissions,
+                                    boolean hideFileDownload, String password, long expirationTimeInMillis,
+                                    String note, String label) {
+        if (file != null) {
+            // TODO check capability?
+            fileActivity.showLoadingDialog(fileActivity.getApplicationContext().
+                getString(R.string.wait_a_moment));
+
+            Intent service = new Intent(fileActivity, OperationsService.class);
+            service.setAction(OperationsService.ACTION_CREATE_SHARE_WITH_SHAREE);
+            service.putExtra(OperationsService.EXTRA_ACCOUNT, fileActivity.getAccount());
+            service.putExtra(OperationsService.EXTRA_REMOTE_PATH, file.getRemotePath());
+            service.putExtra(OperationsService.EXTRA_SHARE_WITH, shareeName);
+            service.putExtra(OperationsService.EXTRA_SHARE_TYPE, shareType);
+            service.putExtra(OperationsService.EXTRA_SHARE_PERMISSIONS, permissions);
+            service.putExtra(OperationsService.EXTRA_SHARE_HIDE_FILE_DOWNLOAD, hideFileDownload);
+            service.putExtra(OperationsService.EXTRA_SHARE_PASSWORD, (password == null) ? "" : password);
+            service.putExtra(OperationsService.EXTRA_SHARE_EXPIRATION_DATE_IN_MILLIS, expirationTimeInMillis);
+            service.putExtra(OperationsService.EXTRA_SHARE_NOTE, (note == null) ? "" : note);
+            service.putExtra(OperationsService.EXTRA_SHARE_PUBLIC_LABEL, (label == null) ? "" : label);
+
+            mWaitingForOpId = fileActivity.getOperationsServiceBinder().queueNewOperation(service);
+
+        } else {
+            Log_OC.e(TAG, "Trying to share a NULL OCFile");
+        }
+    }
+
     /**
      * Helper method to revert to a file version. Starts a request to do it in {@link OperationsService}
      *
@@ -573,7 +638,7 @@ public class FileOperationsHelper {
     public void showShareFile(OCFile file) {
         Intent intent = new Intent(fileActivity, ShareActivity.class);
         intent.putExtra(FileActivity.EXTRA_FILE, file);
-        intent.putExtra(FileActivity.EXTRA_ACCOUNT, fileActivity.getAccount());
+        intent.putExtra(FileActivity.EXTRA_USER, fileActivity.getUser().orElseThrow(RuntimeException::new));
         fileActivity.startActivity(intent);
     }
 
@@ -690,6 +755,34 @@ public class FileOperationsHelper {
         queueShareIntent(updateShareIntent);
     }
 
+    /**
+     * Helper method to update the share information
+     *
+     * @param share                  {@link OCShare} instance which information will be updated.
+     * @param permissions            Permissions to grant to sharee on the shared file.
+     * @param hideFileDownload       true/false to hide file download
+     * @param password               Password to set for the public link; null or empty string to clear the current
+     *                               password
+     * @param expirationTimeInMillis Expiration date to set. A negative value clears the current expiration date,
+     *                               leaving the link unrestricted. Zero makes no change.
+     * @param label                  new label
+     */
+    public void updateShareInformation(OCShare share, int permissions,
+                                       boolean hideFileDownload, String password, long expirationTimeInMillis,
+                                       String label) {
+        Intent updateShareIntent = new Intent(fileActivity, OperationsService.class);
+        updateShareIntent.setAction(OperationsService.ACTION_UPDATE_SHARE_INFO);
+        updateShareIntent.putExtra(OperationsService.EXTRA_ACCOUNT, fileActivity.getAccount());
+        updateShareIntent.putExtra(OperationsService.EXTRA_SHARE_ID, share.getId());
+        updateShareIntent.putExtra(OperationsService.EXTRA_SHARE_PERMISSIONS, permissions);
+        updateShareIntent.putExtra(OperationsService.EXTRA_SHARE_HIDE_FILE_DOWNLOAD, hideFileDownload);
+        updateShareIntent.putExtra(OperationsService.EXTRA_SHARE_PASSWORD, (password == null) ? "" : password);
+        updateShareIntent.putExtra(OperationsService.EXTRA_SHARE_EXPIRATION_DATE_IN_MILLIS, expirationTimeInMillis);
+        updateShareIntent.putExtra(OperationsService.EXTRA_SHARE_PUBLIC_LABEL, (label == null) ? "" : label);
+        queueShareIntent(updateShareIntent);
+    }
+
+
     public void sendShareFile(OCFile file, boolean hideNcSharingOptions) {
         // Show dialog
         FragmentManager fm = fileActivity.getSupportFragmentManager();
@@ -760,6 +853,7 @@ public class FileOperationsHelper {
                 }
 
                 intent.setDataAndType(uri, file.getMimeType());
+                intent.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 fileActivity.startActivityForResult(Intent.createChooser(intent,
                                                                          fileActivity.getString(R.string.set_as)),
                                                     200);
@@ -799,16 +893,14 @@ public class FileOperationsHelper {
     }
 
     public void toggleFavoriteFiles(Collection<OCFile> files, boolean shouldBeFavorite) {
-        List<OCFile> alreadyRightStateList = new ArrayList<>();
+        List<OCFile> toToggle = new ArrayList<>();
         for (OCFile file : files) {
-            if (file.isFavorite() == shouldBeFavorite) {
-                alreadyRightStateList.add(file);
+            if (file.isFavorite() != shouldBeFavorite) {
+                toToggle.add(file);
             }
         }
 
-        files.removeAll(alreadyRightStateList);
-
-        for (OCFile file : files) {
+        for (OCFile file : toToggle) {
             toggleFavoriteFile(file, shouldBeFavorite);
         }
     }
@@ -980,6 +1072,19 @@ public class FileOperationsHelper {
             }
         } else {
             DisplayUtils.showSnackMessage(activity, "No Camera found");
+        }
+    }
+
+    public void scanFromCamera(Activity activity, int requestCode) {
+        DocumentScanner.Configuration configuration = new DocumentScanner.Configuration();
+        configuration.setImageType(Bitmap.CompressFormat.PNG);
+        DocumentScanner.INSTANCE.init(activity, configuration);
+
+        Intent scanIntent = new Intent(activity, AppScanActivity.class);
+        if (PermissionUtil.checkSelfPermission(activity, Manifest.permission.CAMERA)) {
+            activity.startActivityForResult(scanIntent, requestCode);
+        } else {
+            PermissionUtil.requestCameraPermission(activity);
         }
     }
 

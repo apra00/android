@@ -110,16 +110,21 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
         if (type == null) {
             throw new IllegalArgumentException("NULL parent folder");
         }
+        if(type == VirtualFolderType.NONE){
+            throw new IllegalArgumentException("NONE virtual folder type");
+        }
         if (storageManager == null) {
             throw new IllegalArgumentException("NULL storage manager");
         }
 
         this.user = user;
         mStorageManager = storageManager;
-        mImageFiles = mStorageManager.getVirtualFolderContent(type, true);
 
         if (type == VirtualFolderType.GALLERY) {
+            mImageFiles = mStorageManager.getAllGalleryItems();
             mImageFiles = FileStorageUtils.sortOcFolderDescDateModifiedWithoutFavoritesFirst(mImageFiles);
+        } else {
+            mImageFiles = mStorageManager.getVirtualFolderContent(type, true);
         }
 
         mObsoleteFragments = new HashSet<>();

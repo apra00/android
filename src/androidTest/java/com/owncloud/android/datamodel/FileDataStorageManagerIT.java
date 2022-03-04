@@ -32,6 +32,7 @@ import com.owncloud.android.lib.resources.files.SearchRemoteOperation;
 import com.owncloud.android.lib.resources.files.UploadFileRemoteOperation;
 import com.owncloud.android.lib.resources.files.model.RemoteFile;
 import com.owncloud.android.lib.resources.status.CapabilityBooleanType;
+import com.owncloud.android.lib.resources.status.GetCapabilitiesRemoteOperation;
 import com.owncloud.android.lib.resources.status.OCCapability;
 import com.owncloud.android.operations.RefreshFolderOperation;
 import com.owncloud.android.utils.FileStorageUtils;
@@ -50,12 +51,14 @@ import java.util.List;
 import static com.owncloud.android.lib.resources.files.SearchRemoteOperation.SearchType.GALLERY_SEARCH;
 import static com.owncloud.android.lib.resources.files.SearchRemoteOperation.SearchType.PHOTO_SEARCH;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
 
     protected FileDataStorageManager sut;
+    private OCCapability capability;
 
     @Before
     public void before() {
@@ -64,6 +67,10 @@ abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
         sut.deleteVirtuals(VirtualFolderType.GALLERY);
 
         assertEquals(0, sut.getAllFiles().size());
+
+        capability = (OCCapability) new GetCapabilitiesRemoteOperation(null)
+            .execute(client)
+            .getSingleData();
     }
 
     @After
@@ -76,8 +83,10 @@ abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
 
     @Test
     public void simpleTest() {
-        assertTrue(sut.getFileByPath("/").fileExists());
-        assertNull(sut.getFileByPath("/123123"));
+        OCFile file = sut.getFileByDecryptedRemotePath("/");
+        assertNotNull(file);
+        assertTrue(file.fileExists());
+        assertNull(sut.getFileByDecryptedRemotePath("/123123"));
     }
 
     @Test
@@ -112,33 +121,33 @@ abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
                        .execute(client).isSuccess());
 
         // sync
-        assertNull(sut.getFileByPath("/1/1/"));
+        assertNull(sut.getFileByDecryptedRemotePath("/1/1/"));
 
-        assertTrue(new RefreshFolderOperation(sut.getFileByPath("/"),
+        assertTrue(new RefreshFolderOperation(sut.getFileByDecryptedRemotePath("/"),
                                               System.currentTimeMillis() / 1000,
                                               false,
                                               false,
                                               sut,
-                                              account,
+                                              user,
                                               targetContext).execute(client).isSuccess());
 
-        assertTrue(new RefreshFolderOperation(sut.getFileByPath("/1/"),
+        assertTrue(new RefreshFolderOperation(sut.getFileByDecryptedRemotePath("/1/"),
                                               System.currentTimeMillis() / 1000,
                                               false,
                                               false,
                                               sut,
-                                              account,
+                                              user,
                                               targetContext).execute(client).isSuccess());
 
-        assertTrue(new RefreshFolderOperation(sut.getFileByPath("/1/1/"),
+        assertTrue(new RefreshFolderOperation(sut.getFileByDecryptedRemotePath("/1/1/"),
                                               System.currentTimeMillis() / 1000,
                                               false,
                                               false,
                                               sut,
-                                              account,
+                                              user,
                                               targetContext).execute(client).isSuccess());
 
-        assertEquals(3, sut.getFolderContent(sut.getFileByPath("/1/1/"), false).size());
+        assertEquals(3, sut.getFolderContent(sut.getFileByDecryptedRemotePath("/1/1/"), false).size());
     }
 
     /**
@@ -150,7 +159,7 @@ abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
         String remotePath = "/imageFile.png";
         VirtualFolderType virtualType = VirtualFolderType.GALLERY;
 
-        assertEquals(0, sut.getFolderContent(sut.getFileByPath("/"), false).size());
+        assertEquals(0, sut.getFolderContent(sut.getFileByDecryptedRemotePath("/"), false).size());
         assertEquals(1, sut.getAllFiles().size());
 
         File imageFile = getFile("imageFile.png");
@@ -160,18 +169,19 @@ abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
                                                  String.valueOf(System.currentTimeMillis() / 1000))
                        .execute(client).isSuccess());
 
-        assertNull(sut.getFileByPath(remotePath));
+        assertNull(sut.getFileByDecryptedRemotePath(remotePath));
 
         // search
         SearchRemoteOperation searchRemoteOperation = new SearchRemoteOperation("image/%",
                                                                                 PHOTO_SEARCH,
-                                                                                false);
+                                                                                false,
+                                                                                capability);
 
-        RemoteOperationResult searchResult = searchRemoteOperation.execute(client);
+        RemoteOperationResult<List<RemoteFile>> searchResult = searchRemoteOperation.execute(client);
         TestCase.assertTrue(searchResult.isSuccess());
-        TestCase.assertEquals(1, searchResult.getData().size());
+        TestCase.assertEquals(1, searchResult.getResultData().size());
 
-        OCFile ocFile = FileStorageUtils.fillOCFile((RemoteFile) searchResult.getData().get(0));
+        OCFile ocFile = FileStorageUtils.fillOCFile(searchResult.getResultData().get(0));
         sut.saveFile(ocFile);
 
         List<ContentValues> contentValues = new ArrayList<>();
@@ -185,27 +195,27 @@ abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
 
         assertEquals(remotePath, ocFile.getRemotePath());
 
-        assertEquals(0, sut.getFolderContent(sut.getFileByPath("/"), false).size());
+        assertEquals(0, sut.getFolderContent(sut.getFileByDecryptedRemotePath("/"), false).size());
 
         assertEquals(1, sut.getVirtualFolderContent(virtualType, false).size());
         assertEquals(2, sut.getAllFiles().size());
 
         // update root
-        assertTrue(new RefreshFolderOperation(sut.getFileByPath("/"),
+        assertTrue(new RefreshFolderOperation(sut.getFileByDecryptedRemotePath("/"),
                                               System.currentTimeMillis() / 1000,
                                               false,
                                               false,
                                               sut,
-                                              account,
+                                              user,
                                               targetContext).execute(client).isSuccess());
 
 
-        assertEquals(1, sut.getFolderContent(sut.getFileByPath("/"), false).size());
+        assertEquals(1, sut.getFolderContent(sut.getFileByDecryptedRemotePath("/"), false).size());
         assertEquals(1, sut.getVirtualFolderContent(virtualType, false).size());
         assertEquals(2, sut.getAllFiles().size());
 
         assertEquals(sut.getVirtualFolderContent(virtualType, false).get(0),
-                     sut.getFolderContent(sut.getFileByPath("/"), false).get(0));
+                     sut.getFolderContent(sut.getFileByDecryptedRemotePath("/"), false).get(0));
     }
 
     /**
@@ -214,49 +224,53 @@ abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
      */
     @Test
     public void testGallerySearch() throws IOException {
-        sut = new FileDataStorageManager(account,
+        sut = new FileDataStorageManager(user,
                                          targetContext
                                              .getContentResolver()
                                              .acquireContentProviderClient(ProviderMeta.ProviderTableMeta.CONTENT_URI)
         );
 
-        String remotePath = "/imageFile.png";
+        String imagePath = "/imageFile.png";
         VirtualFolderType virtualType = VirtualFolderType.GALLERY;
 
-        assertEquals(0, sut.getFolderContent(sut.getFileByPath("/"), false).size());
+        assertEquals(0, sut.getFolderContent(sut.getFileByDecryptedRemotePath("/"), false).size());
         assertEquals(1, sut.getAllFiles().size());
 
         File imageFile = getFile("imageFile.png");
         assertTrue(new UploadFileRemoteOperation(imageFile.getAbsolutePath(),
-                                                 "/imageFile.png",
+                                                 imagePath,
                                                  "image/png",
-                                                 String.valueOf(System.currentTimeMillis() / 1000))
+                                                 String.valueOf((System.currentTimeMillis() - 10000) / 1000))
                        .execute(client).isSuccess());
 
         // Check that file does not yet exist in local database
-        assertNull(sut.getFileByPath("/imageFile.png"));
+        assertNull(sut.getFileByDecryptedRemotePath(imagePath));
 
+        String videoPath = "/videoFile.mp4";
         File videoFile = getFile("videoFile.mp4");
         assertTrue(new UploadFileRemoteOperation(videoFile.getAbsolutePath(),
-                                                 "/videoFile.mp4",
+                                                 videoPath,
                                                  "video/mpeg",
-                                                 String.valueOf(System.currentTimeMillis() / 1000))
+                                                 String.valueOf((System.currentTimeMillis() + 10000) / 1000))
                        .execute(client).isSuccess());
 
         // Check that file does not yet exist in local database
-        assertNull(sut.getFileByPath("/videoFile.mp4"));
+        assertNull(sut.getFileByDecryptedRemotePath(videoPath));
 
         // search
         SearchRemoteOperation searchRemoteOperation = new SearchRemoteOperation("",
                                                                                 GALLERY_SEARCH,
-                                                                                false);
+                                                                                false,
+                                                                                capability);
 
-        RemoteOperationResult searchResult = searchRemoteOperation.execute(client);
+        RemoteOperationResult<List<RemoteFile>> searchResult = searchRemoteOperation.execute(client);
         TestCase.assertTrue(searchResult.isSuccess());
-        TestCase.assertEquals(2, searchResult.getData().size());
+        TestCase.assertEquals(2, searchResult.getResultData().size());
 
-        OCFile ocFile = FileStorageUtils.fillOCFile((RemoteFile) searchResult.getData().get(0));
+        // newest file must be video path (as sorted by recently modified)
+        OCFile ocFile = FileStorageUtils.fillOCFile( searchResult.getResultData().get(0));
         sut.saveFile(ocFile);
+        assertEquals(videoPath, ocFile.getRemotePath());
 
         List<ContentValues> contentValues = new ArrayList<>();
         ContentValues cv = new ContentValues();
@@ -265,8 +279,10 @@ abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
 
         contentValues.add(cv);
 
-        OCFile ocFile2 = FileStorageUtils.fillOCFile((RemoteFile) searchResult.getData().get(0));
+        // second is image file, as older
+        OCFile ocFile2 = FileStorageUtils.fillOCFile(searchResult.getResultData().get(1));
         sut.saveFile(ocFile2);
+        assertEquals(imagePath, ocFile2.getRemotePath());
 
         ContentValues cv2 = new ContentValues();
         cv2.put(ProviderMeta.ProviderTableMeta.VIRTUAL_TYPE, virtualType.toString());
@@ -276,57 +292,55 @@ abstract public class FileDataStorageManagerIT extends AbstractOnServerIT {
 
         sut.saveVirtuals(contentValues);
 
-        assertEquals(remotePath, ocFile.getRemotePath());
-
-        assertEquals(0, sut.getFolderContent(sut.getFileByPath("/"), false).size());
+        assertEquals(0, sut.getFolderContent(sut.getFileByDecryptedRemotePath("/"), false).size());
 
         assertEquals(2, sut.getVirtualFolderContent(virtualType, false).size());
-        assertEquals(2, sut.getAllFiles().size());
+        assertEquals(3, sut.getAllFiles().size());
 
         // update root
-        assertTrue(new RefreshFolderOperation(sut.getFileByPath("/"),
+        assertTrue(new RefreshFolderOperation(sut.getFileByDecryptedRemotePath("/"),
                                               System.currentTimeMillis() / 1000,
                                               false,
                                               false,
                                               sut,
-                                              account,
+                                              user,
                                               targetContext).execute(client).isSuccess());
 
 
-        assertEquals(2, sut.getFolderContent(sut.getFileByPath("/"), false).size());
+        assertEquals(2, sut.getFolderContent(sut.getFileByDecryptedRemotePath("/"), false).size());
         assertEquals(2, sut.getVirtualFolderContent(virtualType, false).size());
         assertEquals(3, sut.getAllFiles().size());
 
         assertEquals(sut.getVirtualFolderContent(virtualType, false).get(0),
-                     sut.getFolderContent(sut.getFileByPath("/"), false).get(0));
+                     sut.getFolderContent(sut.getFileByDecryptedRemotePath("/"), false).get(0));
     }
 
     @Test
     public void testSaveNewFile() {
         assertTrue(new CreateFolderRemoteOperation("/1/1/", true).execute(client).isSuccess());
 
-        assertTrue(new RefreshFolderOperation(sut.getFileByPath("/"),
+        assertTrue(new RefreshFolderOperation(sut.getFileByDecryptedRemotePath("/"),
                                               System.currentTimeMillis() / 1000,
                                               false,
                                               false,
                                               sut,
-                                              account,
+                                              user,
                                               targetContext).execute(client).isSuccess());
 
-        assertTrue(new RefreshFolderOperation(sut.getFileByPath("/1/"),
+        assertTrue(new RefreshFolderOperation(sut.getFileByDecryptedRemotePath("/1/"),
                                               System.currentTimeMillis() / 1000,
                                               false,
                                               false,
                                               sut,
-                                              account,
+                                              user,
                                               targetContext).execute(client).isSuccess());
 
-        assertTrue(new RefreshFolderOperation(sut.getFileByPath("/1/1/"),
+        assertTrue(new RefreshFolderOperation(sut.getFileByDecryptedRemotePath("/1/1/"),
                                               System.currentTimeMillis() / 1000,
                                               false,
                                               false,
                                               sut,
-                                              account,
+                                              user,
                                               targetContext).execute(client).isSuccess());
 
         OCFile newFile = new OCFile("/1/1/1.txt");

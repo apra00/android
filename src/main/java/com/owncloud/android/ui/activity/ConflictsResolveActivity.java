@@ -17,7 +17,6 @@
 
 package com.owncloud.android.ui.activity;
 
-import android.accounts.Account;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
@@ -31,6 +30,7 @@ import com.owncloud.android.datamodel.UploadsStorageManager;
 import com.owncloud.android.db.OCUpload;
 import com.owncloud.android.files.services.FileDownloader;
 import com.owncloud.android.files.services.FileUploader;
+import com.owncloud.android.files.services.NameCollisionPolicy;
 import com.owncloud.android.lib.common.operations.RemoteOperationResult;
 import com.owncloud.android.lib.common.utils.Log_OC;
 import com.owncloud.android.lib.resources.files.ReadFileRemoteOperation;
@@ -72,7 +72,7 @@ public class ConflictsResolveActivity extends FileActivity implements OnConflict
     protected OnConflictDecisionMadeListener listener;
 
     public static Intent createIntent(OCFile file,
-                                      Account account,
+                                      User user,
                                       long conflictUploadId,
                                       Integer flag,
                                       Context context) {
@@ -81,7 +81,7 @@ public class ConflictsResolveActivity extends FileActivity implements OnConflict
             intent.setFlags(intent.getFlags() | flag);
         }
         intent.putExtra(EXTRA_FILE, file);
-        intent.putExtra(EXTRA_ACCOUNT, account);
+        intent.putExtra(EXTRA_USER, user);
         intent.putExtra(EXTRA_CONFLICT_UPLOAD_ID, conflictUploadId);
 
         return intent;
@@ -120,22 +120,22 @@ public class ConflictsResolveActivity extends FileActivity implements OnConflict
                     break;
                 case KEEP_LOCAL: // Upload
                     FileUploader.uploadUpdateFile(
-                        getBaseContext(),
-                        getAccount(),
-                        file,
-                        localBehaviour,
-                        FileUploader.NameCollisionPolicy.OVERWRITE
+                            getBaseContext(),
+                            getAccount(),
+                            file,
+                            localBehaviour,
+                            NameCollisionPolicy.OVERWRITE
                                                  );
 
                     uploadsStorageManager.removeUpload(upload);
                     break;
                 case KEEP_BOTH: // Upload
                     FileUploader.uploadUpdateFile(
-                        getBaseContext(),
-                        getAccount(),
-                        file,
-                        localBehaviour,
-                        FileUploader.NameCollisionPolicy.RENAME
+                            getBaseContext(),
+                            getAccount(),
+                            file,
+                            localBehaviour,
+                            NameCollisionPolicy.RENAME
                                                  );
 
                     uploadsStorageManager.removeUpload(upload);
@@ -148,6 +148,8 @@ public class ConflictsResolveActivity extends FileActivity implements OnConflict
                         intent.putExtra(FileDownloader.EXTRA_FILE, file);
                         intent.putExtra(EXTRA_CONFLICT_UPLOAD_ID, conflictUploadId);
                         startService(intent);
+                    } else {
+                        uploadsStorageManager.removeUpload(upload);
                     }
                     break;
             }
@@ -175,11 +177,13 @@ public class ConflictsResolveActivity extends FileActivity implements OnConflict
         super.onStart();
         if (getAccount() == null) {
             finish();
+            return;
         }
 
         if (newFile == null) {
             Log_OC.e(TAG, "No file received");
             finish();
+            return;
         }
 
         if (existingFile == null) {
@@ -196,9 +200,11 @@ public class ConflictsResolveActivity extends FileActivity implements OnConflict
 
                         startDialog();
                     } else {
+                        Log_OC.e(TAG, "ReadFileRemoteOp returned failure with code: " + result.getHttpCode());
                         showErrorAndFinish();
                     }
                 } catch (Exception e) {
+                    Log_OC.e(TAG, "Error when trying to fetch remote file", e);
                     showErrorAndFinish();
                 }
 
@@ -213,6 +219,7 @@ public class ConflictsResolveActivity extends FileActivity implements OnConflict
         Optional<User> userOptional = getUser();
 
         if (!userOptional.isPresent()) {
+            Log_OC.e(TAG, "User not present");
             showErrorAndFinish();
         }
 
@@ -231,6 +238,7 @@ public class ConflictsResolveActivity extends FileActivity implements OnConflict
             dialog.show(fragmentTransaction, "conflictDialog");
         } else {
             // Account was changed to a different one - just finish
+            Log_OC.e(TAG, "Account was changed, finishing");
             showErrorAndFinish();
         }
     }

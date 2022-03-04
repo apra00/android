@@ -48,6 +48,7 @@ import com.owncloud.android.utils.theme.ThemeToolbarUtils;
 import com.owncloud.android.utils.theme.ThemeUtils;
 
 import androidx.annotation.StringRes;
+import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.widget.AppCompatSpinner;
 import androidx.appcompat.widget.Toolbar;
@@ -179,7 +180,7 @@ public abstract class ToolbarActivity extends BaseActivity {
     /**
      * Updates title bar and home buttons (state and icon).
      */
-    protected void updateActionBarTitleAndHomeButtonByString(String title) {
+    public void updateActionBarTitleAndHomeButtonByString(String title) {
         String titleToSet = getString(R.string.app_name);    // default
 
         if (title != null) {
@@ -219,7 +220,8 @@ public abstract class ToolbarActivity extends BaseActivity {
     /**
      * Hides the toolbar's info box.
      */
-    protected final void hideInfoBox() {
+    @VisibleForTesting
+    public final void hideInfoBox() {
         mInfoBox.setVisibility(View.GONE);
     }
 

@@ -23,15 +23,15 @@
 
 package com.owncloud.android.db;
 
-import android.accounts.Account;
 import android.os.Parcel;
 import android.os.Parcelable;
 
-import com.nextcloud.client.account.UserAccountManager;
+import com.nextcloud.client.account.User;
 import com.owncloud.android.datamodel.OCFile;
 import com.owncloud.android.datamodel.UploadsStorageManager;
 import com.owncloud.android.datamodel.UploadsStorageManager.UploadStatus;
 import com.owncloud.android.files.services.FileUploader;
+import com.owncloud.android.files.services.NameCollisionPolicy;
 import com.owncloud.android.lib.common.utils.Log_OC;
 import com.owncloud.android.operations.UploadFileOperation;
 import com.owncloud.android.utils.MimeTypeUtil;
@@ -79,7 +79,7 @@ public class OCUpload implements Parcelable {
     /**
      * What to do in case of name collision.
      */
-    private FileUploader.NameCollisionPolicy nameCollisionPolicy;
+    private NameCollisionPolicy nameCollisionPolicy;
 
     /**
      * Create destination folder?
@@ -134,7 +134,7 @@ public class OCUpload implements Parcelable {
      *
      * @param localPath         Absolute path in the local file system to the file to be uploaded.
      * @param remotePath        Absolute path in the remote account to set to the uploaded file.
-     * @param accountName       Name of an ownCloud account to update the file to.
+     * @param accountName       Name of an file owner account.
      */
     public OCUpload(String localPath, String remotePath, String accountName) {
         if (localPath == null || !localPath.startsWith(File.separator)) {
@@ -156,10 +156,10 @@ public class OCUpload implements Parcelable {
      * Convenience constructor to re-upload already existing {@link OCFile}s.
      *
      * @param  ocFile           {@link OCFile} instance to update in the remote server.
-     * @param  account          ownCloud {@link Account} where ocFile is contained.
+     * @param  user             file owner
      */
-    public OCUpload(OCFile ocFile, Account account) {
-        this(ocFile.getStoragePath(), ocFile.getRemotePath(), account.name);
+    public OCUpload(OCFile ocFile, User user) {
+        this(ocFile.getStoragePath(), ocFile.getRemotePath(), user.getAccountName());
     }
 
     /**
@@ -172,7 +172,7 @@ public class OCUpload implements Parcelable {
         fileSize = -1;
         uploadId = -1;
         localAction = FileUploader.LOCAL_BEHAVIOUR_COPY;
-        nameCollisionPolicy = FileUploader.NameCollisionPolicy.DEFAULT;
+        nameCollisionPolicy = NameCollisionPolicy.DEFAULT;
         createRemoteFolder = false;
         uploadStatus = UploadStatus.UPLOAD_IN_PROGRESS;
         lastResult = UploadResult.UNKNOWN;
@@ -230,13 +230,6 @@ public class OCUpload implements Parcelable {
     }
 
     /**
-     * Returns owncloud account as {@link Account} object.
-     */
-    public Account getAccount(UserAccountManager accountManager) {
-        return accountManager.getAccountByName(getAccountName());
-    }
-
-    /**
      * For debugging purposes only.
      */
     public String toFormattedString() {
@@ -245,7 +238,7 @@ public class OCUpload implements Parcelable {
             return localPath + " status:" + getUploadStatus() + " result:" +
                     (getLastResult() == null ? "null" : getLastResult().getValue());
         } catch (NullPointerException e) {
-            Log_OC.d(TAG, "Exception " + e.toString());
+            Log_OC.d(TAG, "Exception", e);
             return e.toString();
         }
     }
@@ -281,7 +274,7 @@ public class OCUpload implements Parcelable {
         remotePath = source.readString();
         accountName = source.readString();
         localAction = source.readInt();
-        nameCollisionPolicy = FileUploader.NameCollisionPolicy.deserialize(source.readInt());
+        nameCollisionPolicy = NameCollisionPolicy.deserialize(source.readInt());
         createRemoteFolder = source.readInt() == 1;
         try {
             uploadStatus = UploadStatus.valueOf(source.readString());
@@ -368,7 +361,7 @@ public class OCUpload implements Parcelable {
         return this.localAction;
     }
 
-    public FileUploader.NameCollisionPolicy getNameCollisionPolicy() {
+    public NameCollisionPolicy getNameCollisionPolicy() {
         return this.nameCollisionPolicy;
     }
 
@@ -424,7 +417,7 @@ public class OCUpload implements Parcelable {
         this.localAction = localAction;
     }
 
-    public void setNameCollisionPolicy(FileUploader.NameCollisionPolicy nameCollisionPolicy) {
+    public void setNameCollisionPolicy(NameCollisionPolicy nameCollisionPolicy) {
         this.nameCollisionPolicy = nameCollisionPolicy;
     }
 
@@ -451,6 +444,4 @@ public class OCUpload implements Parcelable {
     public void setFolderUnlockToken(String folderUnlockToken) {
         this.folderUnlockToken = folderUnlockToken;
     }
-
-    enum CanUploadFileNowStatus {NOW, LATER, FILE_GONE, ERROR}
 }

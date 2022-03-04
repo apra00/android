@@ -22,9 +22,8 @@
  */
 package com.owncloud.android.ui.fragment
 
-import android.Manifest
 import androidx.test.espresso.intent.rule.IntentsTestRule
-import androidx.test.rule.GrantPermissionRule
+import com.nextcloud.client.GrantStoragePermissionRule
 import com.nextcloud.client.TestActivity
 import com.owncloud.android.AbstractIT
 import com.owncloud.android.datamodel.OCFile
@@ -41,7 +40,7 @@ class OCFileListFragmentStaticServerIT : AbstractIT() {
     val testActivityRule = IntentsTestRule(TestActivity::class.java, true, false)
 
     @get:Rule
-    val permissionRule = GrantPermissionRule.grant(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+    val permissionRule = GrantStoragePermissionRule.grant()
 
     @Test
     @ScreenshotTest
@@ -49,14 +48,14 @@ class OCFileListFragmentStaticServerIT : AbstractIT() {
     fun showFiles() {
         val sut = testActivityRule.launchActivity(null)
 
-        val textFile = OCFile("/1.png", "00000001")
+        val textFile = OCFile("/1.png")
         textFile.mimeType = "image/png"
         textFile.fileLength = 1024000
         textFile.modificationTimestamp = 1188206955000
         textFile.parentId = sut.storageManager.getFileByEncryptedRemotePath("/").fileId
         sut.storageManager.saveFile(textFile)
 
-        val imageFile = OCFile("/image.png", "00000002")
+        val imageFile = OCFile("/image.png")
         imageFile.mimeType = "image/png"
         imageFile.isPreviewAvailable = false
         imageFile.fileLength = 3072000
@@ -78,8 +77,6 @@ class OCFileListFragmentStaticServerIT : AbstractIT() {
         screenshot(sut)
     }
 
-    @Test
-    @ScreenshotTest
     /**
      * Use same values as {@link FileDetailSharingFragmentIT listSharesFileAllShareTypes }
      */
@@ -104,7 +101,7 @@ class OCFileListFragmentStaticServerIT : AbstractIT() {
         val emailShare = OCFile("/sharedToEmail.jpg").apply {
             parentId = sut.storageManager.getFileByEncryptedRemotePath("/").fileId
             isSharedWithSharee = true
-            sharees = listOf(ShareeUser("admin@nextcloud.server.com", "admin@nextcloud.server.com", ShareType.EMAIL))
+            sharees = listOf(ShareeUser("admin@nextcloud.localhost", "admin@nextcloud.localhost", ShareType.EMAIL))
         }
         sut.storageManager.saveFile(emailShare)
 
@@ -217,7 +214,7 @@ class OCFileListFragmentStaticServerIT : AbstractIT() {
         folder.setFolder()
         sut.storageManager.saveFile(folder)
 
-        val imageFile = OCFile("/test/image.png", "00000001")
+        val imageFile = OCFile("/test/image.png")
         imageFile.mimeType = "image/png"
         imageFile.fileLength = 1024000
         imageFile.modificationTimestamp = 1188206955000
@@ -241,7 +238,7 @@ class OCFileListFragmentStaticServerIT : AbstractIT() {
         val activity = testActivityRule.launchActivity(null)
         val sut = OCFileListFragment()
 
-        val folder = OCFile("/test/", "00001")
+        val folder = OCFile("/test/")
         folder.setFolder()
         activity.storageManager.saveFile(folder)
 

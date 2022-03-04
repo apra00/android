@@ -21,7 +21,6 @@
  */
 package com.owncloud.android;
 
-import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.ActivityManager;
@@ -120,7 +119,7 @@ import static com.owncloud.android.ui.activity.ContactsPreferenceActivity.PREFER
  */
 public class MainApp extends MultiDexApplication implements HasAndroidInjector {
 
-    public static final OwnCloudVersion OUTDATED_SERVER_VERSION = OwnCloudVersion.nextcloud_18;
+    public static final OwnCloudVersion OUTDATED_SERVER_VERSION = OwnCloudVersion.nextcloud_19;
     public static final OwnCloudVersion MINIMUM_SUPPORTED_SERVER_VERSION = OwnCloudVersion.nextcloud_16;
 
     private static final String TAG = MainApp.class.getSimpleName();
@@ -170,7 +169,8 @@ public class MainApp extends MultiDexApplication implements HasAndroidInjector {
     @Inject
     MigrationsManager migrationsManager;
 
-    private PassCodeManager passCodeManager;
+    @Inject
+    PassCodeManager passCodeManager;
 
     @SuppressWarnings("unused")
     private boolean mBound;
@@ -231,9 +231,8 @@ public class MainApp extends MultiDexApplication implements HasAndroidInjector {
         // we don't want to handle crashes occurring inside crash reporter activity/process;
         // let the platform deal with those
         final boolean isCrashReportingProcess = getAppProcessName().endsWith(":crash");
-        final boolean useExceptionHandler = !appInfo.isDebugBuild();
 
-        if (!isCrashReportingProcess && useExceptionHandler) {
+        if (!isCrashReportingProcess) {
             Thread.UncaughtExceptionHandler defaultPlatformHandler = Thread.getDefaultUncaughtExceptionHandler();
             final ExceptionHandler crashReporter = new ExceptionHandler(this,
                                                                         defaultPlatformHandler);
@@ -244,6 +243,8 @@ public class MainApp extends MultiDexApplication implements HasAndroidInjector {
     @SuppressFBWarnings("ST")
     @Override
     public void onCreate() {
+        enableStrictMode();
+
         setAppTheme(preferences.getDarkThemeMode());
         super.onCreate();
 
@@ -260,7 +261,6 @@ public class MainApp extends MultiDexApplication implements HasAndroidInjector {
         DisplayUtils.useCompatVectorIfNeeded();
 
         fixStoragePath();
-        passCodeManager = new PassCodeManager(preferences);
 
         MainApp.storagePath = preferences.getStoragePath(getApplicationContext().getFilesDir().getAbsolutePath());
 
@@ -425,6 +425,22 @@ public class MainApp extends MultiDexApplication implements HasAndroidInjector {
         }
     }
 
+    private void enableStrictMode() {
+        if (BuildConfig.DEBUG) {
+            StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder()
+                                           .detectDiskReads()
+                                           .detectDiskWrites()
+                                           .detectAll()
+                                           .penaltyLog()
+                                           .build());
+            StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
+                                       .detectLeakedSqlLiteObjects()
+                                       .detectLeakedClosableObjects()
+                                       .penaltyLog()
+                                       .build());
+        }
+    }
+
     public static void initSyncOperations(
         final AppPreferences preferences,
         final UploadsStorageManager uploadsStorageManager,
@@ -433,14 +449,13 @@ public class MainApp extends MultiDexApplication implements HasAndroidInjector {
         final PowerManagementService powerManagementService,
         final BackgroundJobManager backgroundJobManager,
         final Clock clock
-    ) {
+                                         ) {
         updateToAutoUpload();
         cleanOldEntries(clock);
         updateAutoUploadEntries(clock);
 
         if (getAppContext() != null) {
-            if (PermissionUtil.checkSelfPermission(getAppContext(),
-                                                   Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+            if (PermissionUtil.checkExternalStoragePermission(getAppContext())) {
                 splitOutAutoUploadEntries(clock);
             } else {
                 preferences.setAutoUploadSplitEntriesEnabled(true);
@@ -485,11 +500,11 @@ public class MainApp extends MultiDexApplication implements HasAndroidInjector {
 
             if (notificationManager != null) {
                 createChannel(notificationManager, NotificationUtils.NOTIFICATION_CHANNEL_DOWNLOAD,
-                              R.string.notification_channel_download_name,
+                              R.string.notification_channel_download_name_short,
                               R.string.notification_channel_download_description, context);
 
                 createChannel(notificationManager, NotificationUtils.NOTIFICATION_CHANNEL_UPLOAD,
-                              R.string.notification_channel_upload_name,
+                              R.string.notification_channel_upload_name_short,
                               R.string.notification_channel_upload_description, context);
 
                 createChannel(notificationManager, NotificationUtils.NOTIFICATION_CHANNEL_MEDIA,
@@ -500,9 +515,7 @@ public class MainApp extends MultiDexApplication implements HasAndroidInjector {
                               R.string.notification_channel_file_sync_name,
                               R.string.notification_channel_file_sync_description, context);
 
-                createChannel(notificationManager, NotificationUtils.NOTIFICATION_CHANNEL_FILE_OBSERVER,
-                              R.string.notification_channel_file_observer_name, R.string
-                                  .notification_channel_file_observer_description, context);
+                notificationManager.deleteNotificationChannel(NotificationUtils.NOTIFICATION_CHANNEL_FILE_OBSERVER);
 
                 createChannel(notificationManager, NotificationUtils.NOTIFICATION_CHANNEL_PUSH,
                               R.string.notification_channel_push_name, R.string
@@ -529,8 +542,7 @@ public class MainApp extends MultiDexApplication implements HasAndroidInjector {
                                       String channelId, int channelName,
                                       int channelDescription, Context context, int importance) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
-            && getAppContext() != null
-            && notificationManager.getNotificationChannel(channelId) == null) {
+            && getAppContext() != null) {
             CharSequence name = context.getString(channelName);
             String description = context.getString(channelDescription);
             NotificationChannel channel = new NotificationChannel(channelId, name, importance);

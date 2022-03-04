@@ -23,6 +23,7 @@ package com.owncloud.android.authentication;
 
 import android.text.TextUtils;
 
+import java.net.URI;
 import java.util.Locale;
 
 /**
@@ -52,7 +53,7 @@ public final class AuthenticatorUrlUtils {
             normalizedUrl = normalizedUrl.trim();
 
             if (!normalizedUrl.toLowerCase(Locale.ROOT).startsWith(HTTP_PROTOCOL) &&
-                    !normalizedUrl.toLowerCase(Locale.ROOT).startsWith(HTTPS_PROTOCOL)) {
+                !normalizedUrl.toLowerCase(Locale.ROOT).startsWith(HTTPS_PROTOCOL)) {
                 if (sslWhenUnprefixed) {
                     normalizedUrl = HTTPS_PROTOCOL + normalizedUrl;
                 } else {
@@ -96,5 +97,15 @@ public final class AuthenticatorUrlUtils {
         }
 
         return strippedUrl;
+    }
+
+    public static String normalizeScheme(String url) {
+        if (url.matches("[a-zA-Z][a-zA-Z0-9+.-]+://.+")) {
+            URI uri = URI.create(url);
+            String lcScheme = uri.getScheme().toLowerCase(Locale.ROOT);
+            return String.format("%s:%s", lcScheme, uri.getRawSchemeSpecificPart());
+        } else {
+            return url;
+        }
     }
 }

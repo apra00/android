@@ -55,7 +55,7 @@ public class DownloadIT extends AbstractOnServerIT {
                                                                   false,
                                                                   true,
                                                                   getStorageManager(),
-                                                                  account,
+                                                                  user,
                                                                   targetContext)
             .execute(client);
 
@@ -65,8 +65,9 @@ public class DownloadIT extends AbstractOnServerIT {
                                     false,
                                     account,
                                     false,
-                                    targetContext)
-                .execute(client, getStorageManager());
+                                    targetContext,
+                                    getStorageManager())
+                .execute(client);
         }
     }
 
@@ -91,8 +92,8 @@ public class DownloadIT extends AbstractOnServerIT {
         OCFile file2 = fileDataStorageManager.getFileByDecryptedRemotePath(FOLDER + "nonEmpty2.txt");
         verifyDownload(file1, file2);
 
-        assertTrue(new DownloadFileOperation(account, file1, targetContext).execute(client).isSuccess());
-        assertTrue(new DownloadFileOperation(account, file2, targetContext).execute(client).isSuccess());
+        assertTrue(new DownloadFileOperation(user, file1, targetContext).execute(client).isSuccess());
+        assertTrue(new DownloadFileOperation(user, file2, targetContext).execute(client).isSuccess());
 
         refreshFolder(FOLDER);
 

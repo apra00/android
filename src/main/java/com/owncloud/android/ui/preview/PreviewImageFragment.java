@@ -21,7 +21,6 @@
  */
 package com.owncloud.android.ui.preview;
 
-import android.accounts.Account;
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.Configuration;
@@ -34,7 +33,6 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.LayerDrawable;
 import android.graphics.drawable.PictureDrawable;
 import android.os.AsyncTask;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Process;
 import android.text.SpannableString;
@@ -56,7 +54,6 @@ import com.github.chrisbanes.photoview.PhotoView;
 import com.google.android.material.snackbar.Snackbar;
 import com.nextcloud.client.account.User;
 import com.nextcloud.client.account.UserAccountManager;
-import com.nextcloud.client.device.DeviceInfo;
 import com.nextcloud.client.di.Injectable;
 import com.nextcloud.client.network.ConnectivityService;
 import com.owncloud.android.MainApp;
@@ -125,7 +122,6 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
 
     @Inject ConnectivityService connectivityService;
     @Inject UserAccountManager accountManager;
-    @Inject DeviceInfo deviceInfo;
     private PreviewImageFragmentBinding binding;
 
     /**
@@ -161,7 +157,7 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
      * MUST BE KEPT: the system uses it when tries to re-instantiate a fragment automatically
      * (for instance, when the device is turned a aside).
      *
-     * DO NOT CALL IT: an {@link OCFile} and {@link Account} must be provided for a successful
+     * DO NOT CALL IT: an {@link OCFile} and {@link User} must be provided for a successful
      * construction
      */
     public PreviewImageFragment() {
@@ -274,7 +270,7 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
                                                                                   binding.emptyListProgress,
                                                                                   containerActivity.getStorageManager(),
                                                                                   connectivityService,
-                                                                                  containerActivity.getStorageManager().getAccount(),
+                                                                                  containerActivity.getStorageManager().getUser(),
                                                                                   getResources().getColor(R.color.background_color_inverse)
                             );
                         if (resizedImage == null) {
@@ -376,7 +372,6 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
                 containerActivity,
                 getActivity(),
                 false,
-                deviceInfo,
                 currentUser
             );
 
@@ -407,46 +402,37 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
      */
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        switch (item.getItemId()) {
-            case R.id.action_send_share_file:
-                if (getFile().isSharedWithMe() && !getFile().canReshare()) {
-                    Snackbar.make(requireView(),
-                                  R.string.resharing_is_not_allowed,
-                                  Snackbar.LENGTH_LONG
-                                 )
-                            .show();
-                } else {
-                    containerActivity.getFileOperationsHelper().sendShareFile(getFile());
-                }
-                return true;
-
-            case R.id.action_open_file_with:
-                openFile();
-                return true;
-
-            case R.id.action_remove_file:
-                RemoveFilesDialogFragment dialog = RemoveFilesDialogFragment.newInstance(getFile());
-                dialog.show(getFragmentManager(), ConfirmationDialogFragment.FTAG_CONFIRMATION);
-                return true;
-
-            case R.id.action_see_details:
-                seeDetails();
-                return true;
-
-            case R.id.action_download_file:
-            case R.id.action_sync_file:
-                containerActivity.getFileOperationsHelper().syncFile(getFile());
-                return true;
-
-            case R.id.action_set_as_wallpaper:
-                containerActivity.getFileOperationsHelper().setPictureAs(getFile(), getImageView());
-                return true;
-
-            default:
-                return super.onOptionsItemSelected(item);
+        int itemId = item.getItemId();
+        if (itemId == R.id.action_send_share_file) {
+            if (getFile().isSharedWithMe() && !getFile().canReshare()) {
+                Snackbar.make(requireView(),
+                              R.string.resharing_is_not_allowed,
+                              Snackbar.LENGTH_LONG
+                             )
+                    .show();
+            } else {
+                containerActivity.getFileOperationsHelper().sendShareFile(getFile());
+            }
+            return true;
+        } else if (itemId == R.id.action_open_file_with) {
+            openFile();
+            return true;
+        } else if (itemId == R.id.action_remove_file) {
+            RemoveFilesDialogFragment dialog = RemoveFilesDialogFragment.newInstance(getFile());
+            dialog.show(getFragmentManager(), ConfirmationDialogFragment.FTAG_CONFIRMATION);
+            return true;
+        } else if (itemId == R.id.action_see_details) {
+            seeDetails();
+            return true;
+        } else if (itemId == R.id.action_download_file || itemId == R.id.action_sync_file) {
+            containerActivity.getFileOperationsHelper().syncFile(getFile());
+            return true;
+        } else if (itemId == R.id.action_set_as_wallpaper) {
+            containerActivity.getFileOperationsHelper().setPictureAs(getFile(), getImageView());
+            return true;
         }
+        return super.onOptionsItemSelected(item);
     }
-
 
     private void seeDetails() {
         containerActivity.showDetails(getFile());
@@ -464,7 +450,6 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
         super.onDestroy();
     }
 
-
     /**
      * Opens the previewed image with an external application.
      */
@@ -472,7 +457,6 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
         containerActivity.getFileOperationsHelper().openFile(getFile());
         finish();
     }
-
 
     private class LoadBitmapTask extends AsyncTask<OCFile, Void, LoadImage> {
         private static final int PARAMS_LENGTH = 1;
@@ -491,7 +475,6 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
          * Error message to show when a load fails.
          */
         private int mErrorMessageId;
-
 
         /**
          * Constructor.
@@ -682,22 +665,20 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
         layers[1] = bitmapDrawable;
         LayerDrawable layerDrawable = new LayerDrawable(layers);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Activity activity = getActivity();
-            if (activity != null) {
-                int bitmapWidth;
-                int bitmapHeight;
+        Activity activity = getActivity();
+        if (activity != null) {
+            int bitmapWidth;
+            int bitmapHeight;
 
-                if (MIME_TYPE_PNG.equalsIgnoreCase(result.ocFile.getMimeType())) {
-                    bitmapWidth = convertDpToPixel(bitmap.getWidth(), getActivity());
-                    bitmapHeight = convertDpToPixel(bitmap.getHeight(), getActivity());
-                } else {
-                    bitmapWidth = convertDpToPixel(bitmapDrawable.getIntrinsicWidth(), getActivity());
-                    bitmapHeight = convertDpToPixel(bitmapDrawable.getIntrinsicHeight(), getActivity());
-                }
-                layerDrawable.setLayerSize(0, bitmapWidth, bitmapHeight);
-                layerDrawable.setLayerSize(1, bitmapWidth, bitmapHeight);
+            if (MIME_TYPE_PNG.equalsIgnoreCase(result.ocFile.getMimeType())) {
+                bitmapWidth = convertDpToPixel(bitmap.getWidth(), getActivity());
+                bitmapHeight = convertDpToPixel(bitmap.getHeight(), getActivity());
+            } else {
+                bitmapWidth = convertDpToPixel(bitmapDrawable.getIntrinsicWidth(), getActivity());
+                bitmapHeight = convertDpToPixel(bitmapDrawable.getIntrinsicHeight(), getActivity());
             }
+            layerDrawable.setLayerSize(0, bitmapWidth, bitmapHeight);
+            layerDrawable.setLayerSize(1, bitmapWidth, bitmapHeight);
         }
 
         return layerDrawable;
@@ -789,10 +770,9 @@ public class PreviewImageFragment extends FileFragment implements Injectable {
     }
 
     private void toggleImageBackground() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && getFile() != null
-                && (MIME_TYPE_PNG.equalsIgnoreCase(getFile().getMimeType()) ||
-                MIME_TYPE_SVG.equalsIgnoreCase(getFile().getMimeType())) && getActivity() != null
-            && getActivity() instanceof PreviewImageActivity) {
+        if (getFile() != null && (MIME_TYPE_PNG.equalsIgnoreCase(getFile().getMimeType()) ||
+            MIME_TYPE_SVG.equalsIgnoreCase(getFile().getMimeType())) && getActivity() != null &&
+            getActivity() instanceof PreviewImageActivity) {
             PreviewImageActivity previewImageActivity = (PreviewImageActivity) getActivity();
 
             if (binding.image.getDrawable() instanceof LayerDrawable) {

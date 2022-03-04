@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 
+curl_gh() {
+  curl \
+    --header "authorization: Bearer $GITHUB_TOKEN" \
+    "$@"
+}
+
 deleteOldComments() {
     # delete all old comments, matching this type
     echo "Deleting old comments for $BRANCH_TYPE"
-    oldComments=$(curl > /dev/null 2>&1 -u $GITHUB_USER:$GITHUB_PASSWORD -X GET https://api.github.com/repos/nextcloud/android/issues/$PR/comments | jq --arg TYPE $BRANCH_TYPE '.[] | (.id |tostring) + "|" + (.user.login | test("nextcloud-android-bot") | tostring) + "|" + (.body | test([$TYPE]) | tostring)'| grep "true|true" | tr -d "\"" | cut -f1 -d"|")
+    oldComments=$(curl_gh > /dev/null 2>&1  -X GET https://api.github.com/repos/nextcloud/android/issues/$PR/comments | jq --arg TYPE $BRANCH_TYPE '.[] | (.id |tostring) + "|" + (.user.login | test("nextcloud-android-bot") | tostring) + "|" + (.body | test([$TYPE]) | tostring)'| grep "true|true" | tr -d "\"" | cut -f1 -d"|")
     count=$(echo $oldComments | grep true | wc -l)
     echo "Found $count old comments"
 
     echo $oldComments | while read comment ; do
         echo "Deleting comment: $comment"
-        curl > /dev/null 2>&1 -u $GITHUB_USER:$GITHUB_PASSWORD -X DELETE https://api.github.com/repos/nextcloud/android/issues/comments/$comment
+        curl_gh > /dev/null 2>&1 -X DELETE https://api.github.com/repos/nextcloud/android/issues/comments/$comment
     done
 }
 
@@ -23,7 +29,7 @@ upload() {
 
     echo "Uploaded failing tests to https://www.kaminsky.me/nc-dev/android-integrationTests/$REMOTE_FOLDER"
 
-    curl -u $GITHUB_USER:$GITHUB_PASSWORD -X POST https://api.github.com/repos/nextcloud/android/issues/$PR/comments \
+    curl_gh -X POST https://api.github.com/repos/nextcloud/android/issues/$PR/comments \
     -d "{ \"body\" : \"$BRANCH_TYPE test failed: https://www.kaminsky.me/nc-dev/android-integrationTests/$REMOTE_FOLDER \" }"
 
     exit 1
@@ -35,8 +41,7 @@ upload() {
 #4: BRANCH (stable or master)
 #5: TYPE (IT or Unit)
 #6: DRONE_PULL_REQUEST
-#7: GIT_USERNAME
-#8: GIT_TOKEN
+#7: GITHUB_TOKEN
 
 URL=https://nextcloud.kaminsky.me/remote.php/webdav/android-integrationTests
 ID=$3
@@ -45,8 +50,8 @@ PASS=$2
 BRANCH=$4
 TYPE=$5
 PR=$6
-GITHUB_USER=$7
-GITHUB_PASSWORD=$8
+GITHUB_TOKEN="$7"
+
 REMOTE_FOLDER=$ID-$TYPE-$BRANCH-$(date +%H-%M)
 BRANCH_TYPE=$BRANCH-$TYPE
 
@@ -58,11 +63,11 @@ if [ -z $USER ] || [ -z $PASS ]; then
 fi
 
 if [ $TYPE = "IT" ]; then
-    FOLDER=build/reports/androidTests/connected/flavors/GPLAY
+    FOLDER=build/reports/androidTests/connected/flavors/gplay
 elif [ $TYPE = "Unit" ]; then
     FOLDER=build/reports/tests/testGplayDebugUnitTest
 else
-    FOLDER=build/reports/shot/verification
+    FOLDER=build/reports/shot/gplay/debug/verification
 fi
 
 if [ -e $FOLDER ]; then
@@ -71,14 +76,14 @@ else
     deleteOldComments
     echo "$BRANCH_TYPE test failed, but no output was generated. Maybe a preliminary stage failed."
 
-    curl > /dev/null 2>&1 -u $GITHUB_USER:$GITHUB_PASSWORD \
+    curl_gh > /dev/null 2>&1  \
     -X POST https://api.github.com/repos/nextcloud/android/issues/$PR/comments \
     -d "{ \"body\" : \"$BRANCH_TYPE test failed, but no output was generated. Maybe a preliminary stage failed. \" }"
 
-    if [ -e build/reports/androidTests/connected/flavors/gplayDebugAndroidTest ] ; then
+    if [ -e build/reports/androidTests/connected/flavors/gplay ] ; then
         TYPE="IT"
         BRANCH_TYPE=$BRANCH-$TYPE
-        upload "build/reports/androidTests/connected/flavors/gplayDebugAndroidTest"
+        upload "build/reports/androidTests/connected/flavors/gplay"
     fi
 
     if [ -e build/reports/tests/testGplayDebugUnitTest ] ; then
@@ -87,10 +92,10 @@ else
         upload "build/reports/tests/testGplayDebugUnitTest"
     fi
 
-    if [ -e build/reports/shot/verification ] ; then
+    if [ -e build/reports/shot/gplay/debug/verification ] ; then
         TYPE="Screenshot"
         BRANCH_TYPE=$BRANCH-$TYPE
-        upload "build/reports/shot/verification"
+        upload "build/reports/shot/gplay/debug/verification"
     fi
 
     exit 1 # always fail

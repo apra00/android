@@ -32,10 +32,10 @@
     <bool name="show_external_links">true</bool>
     <bool name="show_outdated_server_warning">true</bool>
 
-    <!-- Contacts backup -->
-    <bool name="contacts_backup">true</bool>
+    <!-- Calendar & Contacts backup -->
     <string name="contacts_backup_folder">/.Contacts-Backup</string>
     <integer name="contacts_backup_expire">-1</integer>
+    <string name="calendar_backup_folder">/.Calendar-Backup</string>
 
     <!-- What's new -->
     <bool name="show_whats_new">true</bool>
@@ -53,12 +53,9 @@
     <bool name="multiaccount_support">true</bool>
 
     <!-- Drawer options -->
-    <bool name="recently_added_enabled">false</bool>
     <bool name="recently_modified_enabled">false</bool>
     <bool name="shared_enabled">true</bool>
-    <bool name="videos_enabled">false</bool>
     <bool name="show_drawer_logout">false</bool>
-    <bool name="show_drawer_contacts_backup">false</bool> <!-- if false it will shown in settings -->
 
     <!-- Help, imprint and feedback, and other things -->
     <bool name="passcode_enabled">true</bool>
@@ -97,11 +94,10 @@
     <string name="beta_apk_link" translatable="false">https://download.nextcloud.com/android/dev/latest.apk</string>
     <string name="play_store_register_beta" translatable="false">https://play.google.com/apps/testing/com.nextcloud.client</string>
     <string name="fdroid_link" translatable="false">https://f-droid.org/repository/browse/?fdid=com.nextcloud.client</string>
-    <string name="irc_weblink" translatable="false">http://webchat.freenode.net?channels=nextcloud-mobile</string>
     <string name="help_link" translatable="false">https://help.nextcloud.com/c/clients/android</string>
     <string name="translation_link" translatable="false">https://www.transifex.com/nextcloud/nextcloud/android/</string>
     <string name="contributing_link" translatable="false">https://github.com/nextcloud/android/blob/master/CONTRIBUTING.md</string>
-    <string name="report_issue_link" translatable="false">https://github.com/nextcloud/android/issues/new/choose</string>
+    <string name="report_issue_link" translatable="false">https://github.com/nextcloud/android/issues/new?labels=bug&amp;body=%1$s</string>
 
     <!-- login data links -->
     <string name="login_data_own_scheme" translatable="false">nc</string>

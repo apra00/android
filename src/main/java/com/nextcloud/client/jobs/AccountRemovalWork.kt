@@ -32,7 +32,9 @@ import com.google.gson.Gson
 import com.nextcloud.client.account.User
 import com.nextcloud.client.account.UserAccountManager
 import com.nextcloud.client.core.Clock
+import com.nextcloud.client.preferences.AppPreferences
 import com.nextcloud.client.preferences.AppPreferencesImpl
+import com.nextcloud.common.NextcloudClient
 import com.nextcloud.java.util.Optional
 import com.owncloud.android.MainApp
 import com.owncloud.android.R
@@ -45,6 +47,7 @@ import com.owncloud.android.datamodel.UploadsStorageManager
 import com.owncloud.android.lib.common.OwnCloudClient
 import com.owncloud.android.lib.common.OwnCloudClientManagerFactory
 import com.owncloud.android.lib.common.utils.Log_OC
+import com.owncloud.android.lib.resources.users.DeleteAppPasswordRemoteOperation
 import com.owncloud.android.lib.resources.users.RemoteWipeSuccessRemoteOperation
 import com.owncloud.android.providers.DocumentsStorageProvider
 import com.owncloud.android.ui.activity.ContactsPreferenceActivity
@@ -68,7 +71,8 @@ class AccountRemovalWork(
     private val userAccountManager: UserAccountManager,
     private val backgroundJobManager: BackgroundJobManager,
     private val clock: Clock,
-    private val eventBus: EventBus
+    private val eventBus: EventBus,
+    private val preferences: AppPreferences
 ) : Worker(context, params) {
 
     companion object {
@@ -92,7 +96,7 @@ class AccountRemovalWork(
         val user = optionalUser.get()
         backgroundJobManager.cancelPeriodicContactsBackup(user)
         val userRemoved = userAccountManager.removeUser(user)
-        val storageManager = FileDataStorageManager(user.toPlatformAccount(), context.contentResolver)
+        val storageManager = FileDataStorageManager(user, context.contentResolver)
 
         // disable daily backup
         arbitraryDataProvider.storeOrUpdateKeyValue(
@@ -107,15 +111,20 @@ class AccountRemovalWork(
         arbitraryDataProvider.deleteKeyForAccount(user.accountName, ManageAccountsActivity.PENDING_FOR_REMOVAL)
 
         // remove synced folders set for account
-        remoceSyncedFolders(context, user.toPlatformAccount(), clock)
+        removeSyncedFolders(context, user.toPlatformAccount(), clock)
 
         // delete all uploads for account
-        uploadsStorageManager.removeAccountUploads(user.toPlatformAccount())
+        uploadsStorageManager.removeUserUploads(user)
 
         // delete stored E2E keys and mnemonic
         arbitraryDataProvider.deleteKeyForAccount(user.accountName, EncryptionUtils.PRIVATE_KEY)
         arbitraryDataProvider.deleteKeyForAccount(user.accountName, EncryptionUtils.PUBLIC_KEY)
         arbitraryDataProvider.deleteKeyForAccount(user.accountName, EncryptionUtils.MNEMONIC)
+
+        // unset default account, if needed
+        if (preferences.currentAccountName.equals(user.accountName)) {
+            preferences.currentAccountName = ""
+        }
 
         // remove all files
         removeFiles(user, storageManager)
@@ -132,6 +141,14 @@ class AccountRemovalWork(
         }
         // notify Document Provider
         DocumentsStorageProvider.notifyRootsChanged(context)
+
+        // delete app password
+        val deleteAppPasswordRemoteOperation = DeleteAppPasswordRemoteOperation()
+        val optionNextcloudClient = createNextcloudClient(user)
+
+        if (optionNextcloudClient.isPresent) {
+            deleteAppPasswordRemoteOperation.execute(optionNextcloudClient.get())
+        }
 
         if (userRemoved) {
             eventBus.post(AccountRemovedEvent())
@@ -163,7 +180,7 @@ class AccountRemovalWork(
         }
     }
 
-    private fun remoceSyncedFolders(context: Context, account: Account, clock: Clock) {
+    private fun removeSyncedFolders(context: Context, account: Account, clock: Clock) {
         val syncedFolderProvider = SyncedFolderProvider(
             context.contentResolver,
             AppPreferencesImpl.fromContext(context),
@@ -179,7 +196,7 @@ class AccountRemovalWork(
         syncedFolderProvider.deleteSyncFoldersForAccount(account)
         val filesystemDataProvider = FilesystemDataProvider(context.contentResolver)
         for (syncedFolderId in syncedFolderIds) {
-            filesystemDataProvider.deleteAllEntriesForSyncedFolder(java.lang.Long.toString(syncedFolderId))
+            filesystemDataProvider.deleteAllEntriesForSyncedFolder(syncedFolderId.toString())
         }
     }
 
@@ -196,6 +213,19 @@ class AccountRemovalWork(
             val context = MainApp.getAppContext()
             val factory = OwnCloudClientManagerFactory.getDefaultSingleton()
             val client = factory.getClientFor(user.toOwnCloudAccount(), context)
+            Optional.of(client)
+        } catch (e: Exception) {
+            Log_OC.e(this, "Could not create client", e)
+            Optional.empty()
+        }
+    }
+
+    private fun createNextcloudClient(user: User): Optional<NextcloudClient> {
+        @Suppress("TooGenericExceptionCaught") // needs migration to newer api to get rid of exceptions
+        return try {
+            val context = MainApp.getAppContext()
+            val factory = OwnCloudClientManagerFactory.getDefaultSingleton()
+            val client = factory.getNextcloudClientFor(user.toOwnCloudAccount(), context)
             Optional.of(client)
         } catch (e: Exception) {
             Log_OC.e(this, "Could not create client", e)

@@ -91,6 +91,7 @@ class PlayerService : Service() {
 
     private lateinit var player: Player
     private lateinit var notificationBuilder: NotificationCompat.Builder
+    private var isRunning = false
 
     override fun onCreate() {
         super.onCreate()
@@ -101,12 +102,12 @@ class PlayerService : Service() {
 
         val stop = Intent(this, PlayerService::class.java)
         stop.action = ACTION_STOP
-        val pendingStop = PendingIntent.getService(this, 0, stop, 0)
+        val pendingStop = PendingIntent.getService(this, 0, stop, PendingIntent.FLAG_IMMUTABLE)
         notificationBuilder.addAction(0, getString(R.string.player_stop).toUpperCase(Locale.getDefault()), pendingStop)
 
         val toggle = Intent(this, PlayerService::class.java)
         toggle.action = ACTION_TOGGLE
-        val pendingToggle = PendingIntent.getService(this, 0, toggle, 0)
+        val pendingToggle = PendingIntent.getService(this, 0, toggle, PendingIntent.FLAG_IMMUTABLE)
         notificationBuilder.addAction(
             0,
             getString(R.string.player_toggle).toUpperCase(Locale.getDefault()),
@@ -137,9 +138,9 @@ class PlayerService : Service() {
     }
 
     private fun onActionPlay(intent: Intent) {
-        val user: User = intent.getParcelableExtra(EXTRA_USER) as User
-        val file: OCFile = intent.getParcelableExtra(EXTRA_FILE) as OCFile
-        val startPos = intent.getIntExtra(EXTRA_START_POSITION_MS, 0)
+        val user: User = intent.getParcelableExtra(EXTRA_USER)!!
+        val file: OCFile = intent.getParcelableExtra(EXTRA_FILE)!!
+        val startPos = intent.getLongExtra(EXTRA_START_POSITION_MS, 0)
         val autoPlay = intent.getBooleanExtra(EXTRA_AUTO_PLAY, true)
         val item = PlaylistItem(file = file, startPositionMs = startPos, autoPlay = autoPlay, user = user)
         player.play(item)
@@ -151,7 +152,6 @@ class PlayerService : Service() {
 
     private fun onActionStopFile(args: Bundle?) {
         val file: OCFile = args?.getParcelable(EXTRA_FILE) ?: throw IllegalArgumentException("Missing file argument")
-
         stopServiceAndRemoveNotification(file)
     }
 
@@ -169,6 +169,7 @@ class PlayerService : Service() {
         }
 
         startForeground(R.string.media_notif_ticker, notificationBuilder.build())
+        isRunning = true
     }
 
     private fun stopServiceAndRemoveNotification(file: OCFile?) {
@@ -178,7 +179,10 @@ class PlayerService : Service() {
             player.stop(file)
         }
 
-        stopSelf()
-        stopForeground(true)
+        if (isRunning) {
+            stopForeground(true)
+            stopSelf()
+            isRunning = false
+        }
     }
 }

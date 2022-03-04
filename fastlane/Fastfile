@@ -47,7 +47,9 @@ end
 
 desc "Release phase 2 for RC: checks, tag, upload gplay to playstore with values from build.gradle"
 lane :RC_releasePhase2 do |options|
+    checkReleaseRequirements_RC()
     info = androidVersion
+    promptVersion(info)
     checkChangelog(info)
     checkLibrary_RC()
     checkIfScreenshotsExist()
@@ -66,7 +68,9 @@ end
 
 desc "Release phase 2 for FINAL: checks, tag, upload gplay to playstore with values from build.gradle"
 lane :Final_releasePhase2 do |options|
+    checkReleaseRequirements_Final()
     info = androidVersion
+    promptVersion(info)
     checkChangelog(info)
     checkLibrary_Final()
     checkIfScreenshotsExist()
@@ -81,16 +85,20 @@ end
 
 desc "Makes gplay and generic releases in ../releases/"
 lane :makeReleases do
+    info = androidVersion
     sh("mkdir -p ../release")
     sh("rm -rf ../release/*")
     sh("rm -rf ../build")
 
     SignedRelease(flavor:"Generic")
     sh("mv ../build/outputs/apk/generic/release/*.apk ../release/")
-    sh("rename 'generic-release' 'nextcloud' ../release/generic-release*")
+    sh("mv ../release/generic-release-#{info["versionCode"]}.apk ../release/nextcloud-#{info["versionCode"]}.apk")
 
     SignedRelease(flavor:"Gplay")
     sh("cp ../build/outputs/apk/gplay/release/*.apk ../release/")
+    
+    SignedRelease(flavor:"Huawei")
+    sh("cp ../build/outputs/apk/huawei/release/*.apk ../release/")
 end
 
 desc "Create GPlay release"
@@ -103,6 +111,12 @@ desc "Create Generic release"
 lane :createGenericRelease do |options|
     SignedRelease(flavor:"Generic")
     sh("mv ../build/outputs/apk/generic/release/*.apk ../release/")
+end
+
+desc "Create Huawei release"
+lane :createHuaweiRelease do |options|
+    SignedRelease(flavor:"Huawei")
+    sh("mv ../build/outputs/apk/huawei/release/*.apk ../release/")
 end
 
 desc "Create Dev release"
@@ -128,7 +142,7 @@ private_lane :uploadToHuawei_Final do |options|
         client_id: ENV["FASTLANE_NEXTCLOUD_HUAWEI_CLIENT_ID"],
         client_secret: ENV["FASTLANE_NEXTCLOUD_HUAWEI_CLIENT_SECRET"],
         app_id: ENV["FASTLANE_NEXTCLOUD_HUAWEI_APP_ID"],
-        apk_path: "release/nextcloud-" + options["versionCode"] + ".apk",
+        apk_path: "release/huawei-release-" + options["versionCode"] + ".apk",
         submit_for_review: true,
     )
 end
@@ -152,6 +166,22 @@ private_lane :build_for_screengrab do
     TEST_APK_LOCATION = lane_context[SharedValues::GRADLE_ALL_APK_OUTPUT_PATHS].select{ |i| i[/androidTest/] }[0]
 end
 
+private_lane :checkReleaseRequirements_common do
+    sh("if ! command -v fdroid &>/dev/null; then echo 'fdroid command not found' && exit 1; fi")
+end
+
+private_lane :checkReleaseRequirements_RC do
+    checkReleaseRequirements_common()
+    sh("if ! command -v fdroidMergeRequestRC &>/dev/null; then echo 'fdroidMergeRequestRC command not found'; exit 1; fi")
+    sh("if ! command -v createChangelogPullRequestRC &>/dev/null; then echo 'createChangelogPullRequestRC command not found'; exit 1; fi")
+end
+
+private_lane :checkReleaseRequirements_Final do
+    checkReleaseRequirements_common()
+    sh("if ! command -v fdroidMergeRequestFinal &>/dev/null; then echo 'fdroidMergeRequestFinal command not found'; exit 1; fi")
+    sh("if ! command -v createChangelogPullRequestFinal &>/dev/null; then echo 'createChangelogPullRequestFinal command not found'; exit 1; fi")
+end
+
 private_lane :createChangelogPullRequest_RC do |options|
     sh("createChangelogPullRequestRC " +  options["tag"] + " \"" + options["versionName"] + "\" " + options["versionCode"] + " \"" + options["branch"] + "\" ")
 end
@@ -161,12 +191,12 @@ private_lane :createChangelogPullRequest_Final do |options|
 end
 
 private_lane :checkIfAPKexists do |options|
-    sh("if [ $(/bin/ls -1 ../release | wc -l) -ne 2 ]; then echo 'APKs do not exist ../release/; aborting!' ; exit 1 ;
+    sh("if [ $(/bin/ls -1 ../release | wc -l) -ne 3 ]; then echo 'APKs do not exist ../release/; aborting!' ; exit 1 ;
      fi")
 end
 
 desc "compute version"
-private_lane :androidVersion do |options|
+private_lane :androidVersion do
     File.open("../build.gradle","r") do |f|
         text = f.read
 
@@ -197,19 +227,22 @@ private_lane :androidVersion do |options|
             branch = "stable-" + major[1] + "." + minor[1]
         end
 
-        print "VersionCode: " + versionCode.to_s + "\n"
-        print "Name: " + name + "\n"
-        print "Tag: " + tag + "\n"
-        print "Branch: " + branch + "\n"
-        print "\ndisable IPv6 to upload to Gplay!!!\n"
-
-        answer = prompt(text: "is this okay?", boolean: true)
-
-        if !answer
-            exit
-        end
-
         { "versionCode" => versionCode.to_s, "versionName" => name, "tag" => tag, "branch" => branch }
+    end
+end
+
+desc "Show versions and prompt for confirmation"
+private_lane :promptVersion do |options|
+    print "VersionCode: " + options["versionCode"].to_s + "\n"
+    print "Name: " + options["versionName"] + "\n"
+    print "Tag: " + options["tag"] + "\n"
+    print "Branch: " + options["branch"] + "\n"
+    print "\ndisable IPv6 to upload to Gplay!!!\n"
+
+    answer = prompt(text: "is this okay?", boolean: true)
+
+    if !answer
+        exit
     end
 end
 

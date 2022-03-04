@@ -37,6 +37,7 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 
+import com.nextcloud.client.account.User;
 import com.nextcloud.client.account.UserAccountManager;
 import com.nextcloud.client.core.Clock;
 import com.nextcloud.client.device.PowerManagementService;
@@ -101,13 +102,13 @@ public class UploadListActivity extends FileActivity {
 
     private UploadListLayoutBinding binding;
 
-    public static Intent createIntent(OCFile file, Account account, Integer flag, Context context) {
+    public static Intent createIntent(OCFile file, User user, Integer flag, Context context) {
         Intent intent = new Intent(context, UploadListActivity.class);
         if (flag != null) {
             intent.setFlags(intent.getFlags() | flag);
         }
         intent.putExtra(ConflictsResolveActivity.EXTRA_FILE, file);
-        intent.putExtra(ConflictsResolveActivity.EXTRA_ACCOUNT, account);
+        intent.putExtra(ConflictsResolveActivity.EXTRA_USER, user);
 
         return intent;
     }
@@ -187,12 +188,10 @@ public class UploadListActivity extends FileActivity {
         // retry failed uploads
         new Thread(() -> FileUploader.retryFailedUploads(
             this,
-            null,
             uploadsStorageManager,
             connectivityService,
             userAccountManager,
-            powerManagementService,
-            null
+            powerManagementService
         )).start();
 
         // update UI
@@ -246,21 +245,19 @@ public class UploadListActivity extends FileActivity {
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         boolean retval = true;
-        switch (item.getItemId()) {
-            case android.R.id.home:
-                if (isDrawerOpen()) {
-                    closeDrawer();
-                } else {
-                    openDrawer();
-                }
-                break;
-            case R.id.action_clear_failed_uploads:
-                uploadsStorageManager.clearFailedButNotDelayedUploads();
-                uploadListAdapter.loadUploadItemsFromDb();
-                break;
+        int itemId = item.getItemId();
 
-            default:
-                retval = super.onOptionsItemSelected(item);
+        if (itemId == android.R.id.home) {
+            if (isDrawerOpen()) {
+                closeDrawer();
+            } else {
+                openDrawer();
+            }
+        } else if (itemId == R.id.action_clear_failed_uploads) {
+            uploadsStorageManager.clearFailedButNotDelayedUploads();
+            uploadListAdapter.loadUploadItemsFromDb();
+        } else {
+            retval = super.onOptionsItemSelected(item);
         }
 
         return retval;

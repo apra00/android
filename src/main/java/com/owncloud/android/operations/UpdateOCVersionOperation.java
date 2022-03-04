@@ -67,7 +67,7 @@ public class UpdateOCVersionOperation extends RemoteOperation {
         RemoteOperationResult result = null;
         GetMethod getMethod = null;
 
-        String webDav = client.getWebdavUri().toString();
+        String webDav = client.getFilesDavUri().toString();
 
         try {
             getMethod = new GetMethod(statUrl);
@@ -86,7 +86,7 @@ public class UpdateOCVersionOperation extends RemoteOperation {
                         mOwnCloudVersion = new OwnCloudVersion(version);
                         if (mOwnCloudVersion.isVersionValid()) {
                             accountMngr.setUserData(mAccount, Constants.KEY_OC_VERSION, mOwnCloudVersion.getVersion());
-                            Log_OC.d(TAG, "Got new OC version " + mOwnCloudVersion.toString());
+                            Log_OC.d(TAG, "Got new OC version " + mOwnCloudVersion);
 
                             result = new RemoteOperationResult(ResultCode.OK);
                             

@@ -4,7 +4,7 @@
  *   @author Bartosz Przybylski
  *   @author Chris Narkiewicz
  *   Copyright (C) 2016  Bartosz Przybylski <bart.p.pl@gmail.com>
- *   Copyright (C) 2019 Chris Narkiewicz <hello@ezaquarii.com>
+ *   Copyright (C) 2021 Chris Narkiewicz <hello@ezaquarii.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -22,7 +22,6 @@
 
 package com.owncloud.android.providers;
 
-import android.accounts.Account;
 import android.accounts.AuthenticatorException;
 import android.accounts.OperationCanceledException;
 import android.annotation.SuppressLint;
@@ -36,14 +35,16 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.provider.DocumentsProvider;
 import android.util.Log;
 import android.util.SparseArray;
+import android.widget.Toast;
 
+import com.nextcloud.client.account.User;
 import com.nextcloud.client.account.UserAccountManager;
-import com.nextcloud.client.account.UserAccountManagerImpl;
 import com.nextcloud.client.files.downloader.DownloadTask;
 import com.nextcloud.client.preferences.AppPreferences;
 import com.nextcloud.client.preferences.AppPreferencesImpl;
@@ -54,11 +55,10 @@ import com.owncloud.android.datamodel.OCFile;
 import com.owncloud.android.datamodel.ThumbnailsCacheManager;
 import com.owncloud.android.files.services.FileDownloader;
 import com.owncloud.android.files.services.FileUploader;
-import com.owncloud.android.files.services.FileUploader.NameCollisionPolicy;
+import com.owncloud.android.files.services.NameCollisionPolicy;
 import com.owncloud.android.lib.common.OwnCloudAccount;
 import com.owncloud.android.lib.common.OwnCloudClient;
 import com.owncloud.android.lib.common.OwnCloudClientManagerFactory;
-import com.owncloud.android.lib.common.accounts.AccountUtils.AccountNotFoundException;
 import com.owncloud.android.lib.common.operations.RemoteOperationResult;
 import com.owncloud.android.lib.common.utils.Log_OC;
 import com.owncloud.android.lib.resources.files.CheckEtagRemoteOperation;
@@ -72,6 +72,7 @@ import com.owncloud.android.operations.RemoveFileOperation;
 import com.owncloud.android.operations.RenameFileOperation;
 import com.owncloud.android.ui.activity.SettingsActivity;
 import com.owncloud.android.utils.FileStorageUtils;
+import com.owncloud.android.utils.FileUtil;
 import com.owncloud.android.utils.MimeTypeUtil;
 
 import org.nextcloud.providers.cursors.FileCursor;
@@ -87,12 +88,17 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import javax.inject.Inject;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
+import dagger.android.AndroidInjection;
 
+import static android.os.ParcelFileDescriptor.MODE_READ_ONLY;
+import static android.os.ParcelFileDescriptor.MODE_WRITE_ONLY;
 import static com.owncloud.android.datamodel.OCFile.PATH_SEPARATOR;
 import static com.owncloud.android.datamodel.OCFile.ROOT_PATH;
-import static com.owncloud.android.files.services.FileUploader.LOCAL_BEHAVIOUR_MOVE;
+import static com.owncloud.android.files.services.FileUploader.LOCAL_BEHAVIOUR_DELETE;
 
 public class DocumentsStorageProvider extends DocumentsProvider {
 
@@ -100,6 +106,7 @@ public class DocumentsStorageProvider extends DocumentsProvider {
 
     private static final long CACHE_EXPIRATION = TimeUnit.MILLISECONDS.convert(1, TimeUnit.MINUTES);
 
+    @Inject
     UserAccountManager accountManager;
 
     @VisibleForTesting
@@ -190,28 +197,38 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         Context context = getNonNullContext();
 
         OCFile ocFile = document.getFile();
-        Account account = document.getAccount();
+        User user = document.getUser();
 
-        boolean needsDownload = !ocFile.isDown() || hasServerChange(document);
+        int accessMode = ParcelFileDescriptor.parseMode(mode);
+        boolean writeOnly = (accessMode & MODE_WRITE_ONLY) != 0;
+        boolean wasNotYetStored = ocFile.getStoragePath() == null;
+        boolean needsDownload = (!writeOnly || wasNotYetStored) && (!ocFile.isDown() || hasServerChange(document));
         if (needsDownload) {
             if (ocFile.getLocalModificationTimestamp() > ocFile.getLastSyncDateForData()) {
                 // TODO show a conflict notification with a pending intent that shows a ConflictResolveDialog
                 Log_OC.w(TAG, "Conflict found!");
             } else {
-                DownloadFileOperation downloadFileOperation = new DownloadFileOperation(account, ocFile, context);
+                DownloadFileOperation downloadFileOperation = new DownloadFileOperation(user, ocFile, context);
                 RemoteOperationResult result = downloadFileOperation.execute(document.getClient());
                 if (!result.isSuccess()) {
-                    Log_OC.e(TAG, result.toString());
-                    throw new FileNotFoundException("Error downloading file: " + ocFile.getFileName());
+                    if (ocFile.isDown()) {
+                        Handler handler = new Handler(Looper.getMainLooper());
+                        handler.post(() -> Toast.makeText(MainApp.getAppContext(),
+                                                          R.string.file_not_synced,
+                                                          Toast.LENGTH_SHORT).show());
+                    } else {
+                        Log_OC.e(TAG, result.toString());
+                        throw new FileNotFoundException("Error downloading file: " + ocFile.getFileName());
+                    }
+                } else {
+                    saveDownloadedFile(document.getStorageManager(), downloadFileOperation, ocFile);
                 }
-                saveDownloadedFile(document.getStorageManager(), downloadFileOperation, ocFile);
             }
         }
 
         File file = new File(ocFile.getStoragePath());
 
-        int accessMode = ParcelFileDescriptor.parseMode(mode);
-        if (accessMode != ParcelFileDescriptor.MODE_READ_ONLY) {
+        if (accessMode != MODE_READ_ONLY) {
             // The calling thread is not guaranteed to have a Looper, so we can't block it with the OnCloseListener.
             // Thus, we are unable to do a synchronous upload and have to start an asynchronous one.
             Handler handler = new Handler(context.getMainLooper());
@@ -227,9 +244,9 @@ public class DocumentsStorageProvider extends DocumentsProvider {
                         // upload file with FileUploader service (off main thread)
                         FileUploader.uploadUpdateFile(
                             context,
-                            account,
+                            user.toPlatformAccount(),
                             ocFile,
-                            LOCAL_BEHAVIOUR_MOVE,
+                            LOCAL_BEHAVIOUR_DELETE,
                             NameCollisionPolicy.OVERWRITE,
                             false);
                     } else { // error, no upload needed
@@ -248,7 +265,7 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         Context context = getNonNullContext();
         OCFile ocFile = document.getFile();
         RemoteOperationResult result = new CheckEtagRemoteOperation(ocFile.getRemotePath(), ocFile.getEtag())
-            .execute(document.getAccount(), context);
+            .execute(document.getUser().toPlatformAccount(), context);
         switch (result.getCode()) {
             case ETAG_CHANGED:
                 return true;
@@ -288,7 +305,7 @@ public class DocumentsStorageProvider extends DocumentsProvider {
 
     @Override
     public boolean onCreate() {
-        accountManager = UserAccountManagerImpl.fromContext(getContext());
+        AndroidInjection.inject(this);
 
         // initiate storage manager collection, because we need to serve document(tree)s
         // with persist permissions
@@ -310,7 +327,7 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         boolean exists = ThumbnailsCacheManager.containsBitmap(ThumbnailsCacheManager.PREFIX_THUMBNAIL
                                                                    + file.getRemoteId());
         if (!exists) {
-            ThumbnailsCacheManager.generateThumbnailFromOCFile(file, document.getAccount(), getContext());
+            ThumbnailsCacheManager.generateThumbnailFromOCFile(file, document.getUser(), getContext());
         }
 
         return new AssetFileDescriptor(DiskLruImageCacheFileProvider.getParcelFileDescriptorForOCFile(file),
@@ -324,8 +341,10 @@ public class DocumentsStorageProvider extends DocumentsProvider {
 
         Document document = toDocument(documentId);
 
-        RemoteOperationResult result = new RenameFileOperation(document.getRemotePath(), displayName)
-            .execute(document.getClient(), document.getStorageManager());
+        RemoteOperationResult result = new RenameFileOperation(document.getRemotePath(),
+                                                               displayName,
+                                                               document.getStorageManager())
+            .execute(document.getClient());
 
         if (!result.isSuccess()) {
             Log_OC.e(TAG, result.toString());
@@ -348,8 +367,10 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         FileDataStorageManager storageManager = document.getStorageManager();
         Document targetFolder = toDocument(targetParentDocumentId);
 
-        RemoteOperationResult result = new CopyFileOperation(document.getRemotePath(), targetFolder.getRemotePath())
-            .execute(document.getClient(), storageManager);
+        RemoteOperationResult result = new CopyFileOperation(document.getRemotePath(),
+                                                             targetFolder.getRemotePath(),
+                                                             document.getStorageManager())
+            .execute(document.getClient());
 
         if (!result.isSuccess()) {
             Log_OC.e(TAG, result.toString());
@@ -358,11 +379,16 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         }
 
         Context context = getNonNullContext();
-        Account account = document.getAccount();
+        User user = document.getUser();
 
-        RemoteOperationResult updateParent = new RefreshFolderOperation(targetFolder.getFile(), System.currentTimeMillis(),
-                                                                        false, false, true, storageManager,
-                                                                        account, context)
+        RemoteOperationResult updateParent = new RefreshFolderOperation(targetFolder.getFile(),
+                                                                        System.currentTimeMillis(),
+                                                                        false,
+                                                                        false,
+                                                                        true,
+                                                                        storageManager,
+                                                                        user,
+                                                                        context)
             .execute(targetFolder.getClient());
 
         if (!updateParent.isSuccess()) {
@@ -391,8 +417,10 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         Document document = toDocument(sourceDocumentId);
         Document targetFolder = toDocument(targetParentDocumentId);
 
-        RemoteOperationResult result = new MoveFileOperation(document.getRemotePath(), targetFolder.getRemotePath())
-            .execute(document.getClient(), document.getStorageManager());
+        RemoteOperationResult result = new MoveFileOperation(document.getRemotePath(),
+                                                             targetFolder.getRemotePath(),
+                                                             document.getStorageManager())
+            .execute(document.getClient());
 
         if (!result.isSuccess()) {
             Log_OC.e(TAG, result.toString());
@@ -448,8 +476,9 @@ public class DocumentsStorageProvider extends DocumentsProvider {
 
         RemoteOperationResult result = new CreateFolderOperation(newDirPath,
                                                                  accountManager.getUser(),
-                                                                 context)
-            .execute(targetFolder.getClient(), storageManager);
+                                                                 context,
+                                                                 storageManager)
+            .execute(targetFolder.getClient());
 
         if (!result.isSuccess()) {
             Log_OC.e(TAG, result.toString());
@@ -459,7 +488,7 @@ public class DocumentsStorageProvider extends DocumentsProvider {
 
         RemoteOperationResult updateParent = new RefreshFolderOperation(targetFolder.getFile(), System.currentTimeMillis(),
                                                                         false, false, true, storageManager,
-                                                                        targetFolder.getAccount(), context)
+                                                                        targetFolder.getUser(), context)
             .execute(targetFolder.getClient());
 
         if (!updateParent.isSuccess()) {
@@ -476,10 +505,10 @@ public class DocumentsStorageProvider extends DocumentsProvider {
 
     private String createFile(Document targetFolder, String displayName, String mimeType) throws FileNotFoundException {
 
-        Account account = targetFolder.getAccount();
+        User user = targetFolder.getUser();
 
         // create dummy file
-        File tempDir = new File(FileStorageUtils.getTemporalPath(account.name));
+        File tempDir = new File(FileStorageUtils.getTemporalPath(user.getAccountName()));
 
         if (!tempDir.exists() && !tempDir.mkdirs()) {
             throw new FileNotFoundException("Temp folder could not be created: " + tempDir.getAbsolutePath());
@@ -510,6 +539,7 @@ public class DocumentsStorageProvider extends DocumentsProvider {
                                                                      mimeType,
                                                                      "",
                                                                      String.valueOf(System.currentTimeMillis() / 1000),
+                                                                     FileUtil.getCreationTimestamp(emptyFile),
                                                                      false)
             .execute(client);
 
@@ -526,7 +556,7 @@ public class DocumentsStorageProvider extends DocumentsProvider {
                                                                         false,
                                                                         true,
                                                                         targetFolder.getStorageManager(),
-                                                                        account,
+                                                                        user,
                                                                         context)
             .execute(client);
 
@@ -562,10 +592,11 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         OCFile file = document.getStorageManager().getFileByPath(document.getRemotePath());
         RemoteOperationResult result = new RemoveFileOperation(file,
                                                                false,
-                                                               document.getAccount(),
+                                                               document.getUser().toPlatformAccount(),
                                                                true,
-                                                               context)
-            .execute(document.getClient(), document.getStorageManager());
+                                                               context,
+                                                               document.getStorageManager())
+            .execute(document.getClient());
 
         if (!result.isSuccess()) {
             throw new FileNotFoundException("Failed to delete document with documentId " + documentId);
@@ -612,7 +643,9 @@ public class DocumentsStorageProvider extends DocumentsProvider {
             // The solution below uses paths and is faster by a factor of 2-10 depending on the nesting level of child.
             // So far, the same document with its unique ID can never be in two places at once.
             // If this assumption ever changes, this code would need to be adapted.
-            return parentDocument.getAccount() == currentDocument.getAccount() && childPath.startsWith(parentPath);
+            User parentDocumentOwner = parentDocument.getUser();
+            User currentDocumentOwner = currentDocument.getUser();
+            return parentDocumentOwner.nameEquals(currentDocumentOwner) && childPath.startsWith(parentPath);
 
         } catch (FileNotFoundException e) {
             Log.e(TAG, "failed to check for child document", e);
@@ -630,7 +663,7 @@ public class DocumentsStorageProvider extends DocumentsProvider {
     private FileDataStorageManager getStorageManager(String rootId) {
         for(int i = 0; i < rootIdToStorageManager.size(); i++) {
             FileDataStorageManager storageManager = rootIdToStorageManager.valueAt(i);
-            if (storageManager.getAccount().name.equals(rootId)) {
+            if (storageManager.getUser().nameEquals(rootId)) {
                 return storageManager;
             }
         }
@@ -644,9 +677,9 @@ public class DocumentsStorageProvider extends DocumentsProvider {
 
         ContentResolver contentResolver = getContext().getContentResolver();
 
-        for (Account account : accountManager.getAccounts()) {
-            final FileDataStorageManager storageManager = new FileDataStorageManager(account, contentResolver);
-            rootIdToStorageManager.put(account.hashCode(), storageManager);
+        for (User user : accountManager.getAllUsers()) {
+            final FileDataStorageManager storageManager = new FileDataStorageManager(user, contentResolver);
+            rootIdToStorageManager.put(user.hashCode(), storageManager);
         }
     }
 
@@ -714,8 +747,13 @@ public class DocumentsStorageProvider extends DocumentsProvider {
         @Override
         public final RemoteOperationResult doInBackground(Void... params) {
             Log.d(TAG, "run ReloadFolderDocumentTask(), id=" + folder.getDocumentId());
-            return new RefreshFolderOperation(folder.getFile(), System.currentTimeMillis(), false,
-                                              false, true, folder.getStorageManager(), folder.getAccount(),
+            return new RefreshFolderOperation(folder.getFile(),
+                                              System.currentTimeMillis(),
+                                              false,
+                                              true,
+                                              true,
+                                              folder.getStorageManager(),
+                                              folder.getUser(),
                                               MainApp.getAppContext())
                 .execute(folder.getClient());
         }
@@ -760,8 +798,8 @@ public class DocumentsStorageProvider extends DocumentsProvider {
             return storageManager;
         }
 
-        public Account getAccount() {
-            return getStorageManager().getAccount();
+        public User getUser() {
+            return getStorageManager().getUser();
         }
 
         public OCFile getFile() {
@@ -774,9 +812,10 @@ public class DocumentsStorageProvider extends DocumentsProvider {
 
         OwnCloudClient getClient() {
             try {
-                OwnCloudAccount ocAccount = new OwnCloudAccount(getAccount(), MainApp.getAppContext());
+
+                OwnCloudAccount ocAccount = getUser().toOwnCloudAccount();
                 return OwnCloudClientManagerFactory.getDefaultSingleton().getClientFor(ocAccount, getContext());
-            } catch (OperationCanceledException | IOException | AuthenticatorException | AccountNotFoundException e) {
+            } catch (OperationCanceledException | IOException | AuthenticatorException e) {
                 Log_OC.e(TAG, "Failed to set client", e);
             }
             return null;

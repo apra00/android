@@ -34,6 +34,7 @@ import android.content.Intent;
 import android.content.SyncResult;
 import android.os.Bundle;
 
+import com.nextcloud.client.account.UserAccountManager;
 import com.owncloud.android.R;
 import com.owncloud.android.authentication.AuthenticatorActivity;
 import com.owncloud.android.datamodel.FileDataStorageManager;
@@ -120,18 +121,20 @@ public class FileSyncAdapter extends AbstractOwnCloudSyncAdapter {
      *
      * {@inheritDoc}
      */
-    public FileSyncAdapter(Context context, boolean autoInitialize) {
-        super(context, autoInitialize);
+    public FileSyncAdapter(Context context, boolean autoInitialize, UserAccountManager userAccountManager) {
+        super(context, autoInitialize, userAccountManager);
     }
-
 
     /**
      * Creates a {@link FileSyncAdapter}
      *
      * {@inheritDoc}
      */
-    public FileSyncAdapter(Context context, boolean autoInitialize, boolean allowParallelSyncs) {
-        super(context, autoInitialize, allowParallelSyncs);
+    public FileSyncAdapter(Context context,
+                           boolean autoInitialize,
+                           boolean allowParallelSyncs,
+                           UserAccountManager userAccountManager) {
+        super(context, autoInitialize, allowParallelSyncs, userAccountManager);
     }
 
 
@@ -155,7 +158,7 @@ public class FileSyncAdapter extends AbstractOwnCloudSyncAdapter {
 
         this.setAccount(account);
         this.setContentProviderClient(providerClient);
-        this.setStorageManager(new FileDataStorageManager(account, providerClient));
+        this.setStorageManager(new FileDataStorageManager(getUser(), providerClient));
 
         try {
             this.initClientForCurrentAccount();
@@ -258,16 +261,14 @@ public class FileSyncAdapter extends AbstractOwnCloudSyncAdapter {
         }
 
         // folder synchronization
-        RefreshFolderOperation synchFolderOp = new RefreshFolderOperation( folder,
-                                                                                   mCurrentSyncTime,
-                                                                                   true,
-                                                                                   false,
-                                                                                   getStorageManager(),
-                                                                                   getAccount(),
-                                                                                   getContext()
-                                                                                  );
+        RefreshFolderOperation synchFolderOp = new RefreshFolderOperation(folder,
+                                                                          mCurrentSyncTime,
+                                                                          true,
+                                                                          false,
+                                                                          getStorageManager(),
+                                                                          getUser(),
+                                                                          getContext());
         RemoteOperationResult result = synchFolderOp.execute(getClient());
-
 
         // synchronized folder -> notice to UI - ALWAYS, although !result.isSuccess
         sendLocalBroadcast(EVENT_FULL_SYNC_FOLDER_CONTENTS_SYNCED, folder.getRemotePath(), result);
@@ -405,7 +406,7 @@ public class FileSyncAdapter extends AbstractOwnCloudSyncAdapter {
                 .setContentTitle(i18n(R.string.sync_fail_ticker_unauthorized))
                 .setContentIntent(PendingIntent.getActivity(
                     getContext(), (int)System.currentTimeMillis(), updateAccountCredentials,
-                        PendingIntent.FLAG_ONE_SHOT
+                        PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE
                 ))
                 .setContentText(i18n(R.string.sync_fail_content_unauthorized, getAccount().name));
         } else {
@@ -433,8 +434,8 @@ public class FileSyncAdapter extends AbstractOwnCloudSyncAdapter {
             // TODO put something smart in the contentIntent below
             notificationBuilder
                 .setContentIntent(PendingIntent.getActivity(
-                    getContext(), (int) System.currentTimeMillis(), new Intent(), 0
-                ))
+                    getContext(), (int) System.currentTimeMillis(), new Intent(), PendingIntent.FLAG_IMMUTABLE
+                                                           ))
                 .setContentTitle(i18n(R.string.sync_fail_in_favourites_ticker))
                 .setContentText(getQuantityString(
                     R.plurals.sync_fail_in_favourites_content,
@@ -451,8 +452,8 @@ public class FileSyncAdapter extends AbstractOwnCloudSyncAdapter {
             // TODO put something smart in the contentIntent below
             notificationBuilder
                 .setContentIntent(PendingIntent.getActivity(
-                    getContext(), (int) System.currentTimeMillis(), new Intent(), 0
-                ))
+                    getContext(), (int) System.currentTimeMillis(), new Intent(), PendingIntent.FLAG_IMMUTABLE
+                                                           ))
                 .setContentTitle(i18n(R.string.sync_conflicts_in_favourites_ticker))
                 .setContentText(i18n(R.string.sync_conflicts_in_favourites_ticker, mConflictsFound));
 
@@ -477,7 +478,7 @@ public class FileSyncAdapter extends AbstractOwnCloudSyncAdapter {
 
         /// includes a pending intent in the notification showing a more detailed explanation
         Intent explanationIntent = new Intent(getContext(), ErrorsWhileCopyingHandlerActivity.class);
-        explanationIntent.putExtra(ErrorsWhileCopyingHandlerActivity.EXTRA_ACCOUNT, getAccount());
+        explanationIntent.putExtra(ErrorsWhileCopyingHandlerActivity.EXTRA_USER, getUser());
         ArrayList<String> remotePaths = new ArrayList<String>();
         ArrayList<String> localPaths = new ArrayList<String>();
         remotePaths.addAll(mForgottenLocalFiles.keySet());
@@ -488,8 +489,8 @@ public class FileSyncAdapter extends AbstractOwnCloudSyncAdapter {
 
         notificationBuilder
             .setContentIntent(PendingIntent.getActivity(
-                getContext(), (int) System.currentTimeMillis(), explanationIntent, 0
-            ))
+                getContext(), (int) System.currentTimeMillis(), explanationIntent, PendingIntent.FLAG_IMMUTABLE
+                                                       ))
             .setContentTitle(i18n(R.string.sync_foreign_files_forgotten_ticker))
             .setContentText(getQuantityString(
                     R.plurals.sync_foreign_files_forgotten_content,

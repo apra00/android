@@ -57,8 +57,10 @@ import com.nextcloud.client.preferences.AppPreferences;
 import com.nextcloud.client.preferences.AppPreferencesImpl;
 import com.owncloud.android.MainApp;
 import com.owncloud.android.R;
+import com.owncloud.android.databinding.ListFragmentBinding;
 import com.owncloud.android.lib.common.utils.Log_OC;
 import com.owncloud.android.lib.resources.files.SearchRemoteOperation;
+import com.owncloud.android.lib.resources.status.OwnCloudVersion;
 import com.owncloud.android.ui.EmptyRecyclerView;
 import com.owncloud.android.ui.activity.FileDisplayActivity;
 import com.owncloud.android.ui.activity.FolderPickerActivity;
@@ -73,7 +75,6 @@ import com.owncloud.android.utils.theme.ThemeLayoutUtils;
 import com.owncloud.android.utils.theme.ThemeToolbarUtils;
 
 import org.greenrobot.eventbus.EventBus;
-import org.parceler.Parcel;
 
 import java.util.ArrayList;
 
@@ -141,18 +142,7 @@ public class ExtendedListFragment extends Fragment implements
 
     private float mScale = AppPreferencesImpl.DEFAULT_GRID_COLUMN;
 
-    @Parcel
-    public enum SearchType {
-        NO_SEARCH,
-        REGULAR_FILTER,
-        FILE_SEARCH,
-        FAVORITE_SEARCH,
-        GALLERY_SEARCH,
-        RECENTLY_MODIFIED_SEARCH,
-        RECENTLY_ADDED_SEARCH,
-        // not a real filter, but nevertheless
-        SHARED_FILTER
-    }
+    private ListFragmentBinding binding;
 
     protected void setRecyclerViewAdapter(RecyclerView.Adapter recyclerViewAdapter) {
         mRecyclerView.setAdapter(recyclerViewAdapter);
@@ -220,9 +210,9 @@ public class ExtendedListFragment extends Fragment implements
             if (getActivity() != null && !(getActivity() instanceof FolderPickerActivity)
                 && !(getActivity() instanceof UploadFilesActivity)) {
                 if (getActivity() instanceof FileDisplayActivity) {
-                    OCFileListFragment fileFragment = ((FileDisplayActivity) getActivity()).getListOfFilesFragment();
-                    if (fileFragment != null) {
-                        fileFragment.setFabVisible(!hasFocus);
+                    Fragment fragment = ((FileDisplayActivity) getActivity()).getLeftFragment();
+                    if (fragment instanceof OCFileListFragment) {
+                        ((OCFileListFragment) fragment).setFabVisible(!hasFocus);
                     }
                 }
                 if (TextUtils.isEmpty(searchView.getQuery())) {
@@ -267,7 +257,7 @@ public class ExtendedListFragment extends Fragment implements
                                                    R.drawable.ic_list_empty_folder,
                                                    true);
                         } else {
-                            setEmptyListMessage(ExtendedListFragment.SearchType.NO_SEARCH);
+                            setEmptyListMessage(SearchType.NO_SEARCH);
                         }
                     }
 
@@ -317,8 +307,18 @@ public class ExtendedListFragment extends Fragment implements
                 } else {
                     handler.post(() -> {
                         if (adapter instanceof OCFileListAdapter) {
-                            EventBus.getDefault().post(new SearchEvent(query,
-                                                                       SearchRemoteOperation.SearchType.FILE_SEARCH));
+                            if (accountManager
+                                .getUser()
+                                .getServer()
+                                .getVersion()
+                                .isNewerOrEqual(OwnCloudVersion.nextcloud_20)
+                            ) {
+                                ((FileDisplayActivity) activity).performUnifiedSearch(query);
+                            } else {
+                                EventBus.getDefault().post(
+                                    new SearchEvent(query, SearchRemoteOperation.SearchType.FILE_SEARCH)
+                                                          );
+                            }
                         } else if (adapter instanceof LocalFileListAdapter) {
                             LocalFileListAdapter localFileListAdapter = (LocalFileListAdapter) adapter;
                             localFileListAdapter.filter(query);
@@ -355,12 +355,14 @@ public class ExtendedListFragment extends Fragment implements
     public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         Log_OC.d(TAG, "onCreateView");
 
-        View v = inflater.inflate(R.layout.list_fragment, null);
+        binding = ListFragmentBinding.inflate(inflater, container, false);
+        View v = binding.getRoot();
+
         setupEmptyList(v);
 
-        mRecyclerView = v.findViewById(R.id.list_root);
+        mRecyclerView = binding.listRoot;
         mRecyclerView.setHasFooter(true);
-        mRecyclerView.setEmptyView(v.findViewById(R.id.empty_list_view));
+        mRecyclerView.setEmptyView(binding.emptyList.emptyListView);
         mRecyclerView.setHasFixedSize(true);
         mRecyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
 
@@ -380,7 +382,7 @@ public class ExtendedListFragment extends Fragment implements
         });
 
         // Pull-down to refresh layout
-        mRefreshListLayout = v.findViewById(R.id.swipe_containing_list);
+        mRefreshListLayout = binding.swipeContainingList;
         ThemeLayoutUtils.colorSwipeRefreshLayout(getContext(), mRefreshListLayout);
         mRefreshListLayout.setOnRefreshListener(this);
 
@@ -388,6 +390,12 @@ public class ExtendedListFragment extends Fragment implements
         mSwitchGridViewButton = getActivity().findViewById(R.id.switch_grid_view_button);
 
         return v;
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        binding = null;
     }
 
     private class ScaleListener extends ScaleGestureDetector.SimpleOnScaleGestureListener {
@@ -419,10 +427,10 @@ public class ExtendedListFragment extends Fragment implements
     }
 
     protected void setupEmptyList(View view) {
-        mEmptyListContainer = view.findViewById(R.id.empty_list_view);
-        mEmptyListMessage = view.findViewById(R.id.empty_list_view_text);
-        mEmptyListHeadline = view.findViewById(R.id.empty_list_view_headline);
-        mEmptyListIcon = view.findViewById(R.id.empty_list_icon);
+        mEmptyListContainer = binding.emptyList.emptyListView;
+        mEmptyListMessage = binding.emptyList.emptyListViewText;
+        mEmptyListHeadline = binding.emptyList.emptyListViewHeadline;
+        mEmptyListIcon = binding.emptyList.emptyListIcon;
     }
 
     /**
@@ -651,10 +659,6 @@ public class ExtendedListFragment extends Fragment implements
                     setMessageForEmptyList(R.string.file_list_empty_headline_server_search,
                                            R.string.file_list_empty_recently_modified,
                                            R.drawable.ic_list_empty_recent);
-                } else if (searchType == SearchType.RECENTLY_ADDED_SEARCH) {
-                    setMessageForEmptyList(R.string.file_list_empty_headline_server_search,
-                                           R.string.file_list_empty_recently_added,
-                                           R.drawable.ic_list_empty_recent);
                 } else if (searchType == SearchType.REGULAR_FILTER) {
                     setMessageForEmptyList(R.string.file_list_empty_headline_search,
                                            R.string.file_list_empty_search,
@@ -663,6 +667,10 @@ public class ExtendedListFragment extends Fragment implements
                     setMessageForEmptyList(R.string.file_list_empty_shared_headline,
                                            R.string.file_list_empty_shared,
                                            R.drawable.ic_list_empty_shared);
+                } else if (searchType == SearchType.GALLERY_SEARCH) {
+                    setMessageForEmptyList(R.string.file_list_empty_headline_server_search,
+                                           R.string.file_list_empty_gallery,
+                                           R.drawable.file_image);
                 }
             }
         });
